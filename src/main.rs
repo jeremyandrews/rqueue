@@ -14,7 +14,7 @@ use rocket_contrib::json::{Json, JsonValue};
 use priority_queue::PriorityQueue;
 
 type Priority = usize;
-type Timestamp = u64;
+type Timestamp = u128;
 // This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]
 struct MessageIn {
@@ -33,15 +33,14 @@ struct MessageInternal {
 struct MessageOut {
     contents: String,
     priority: Priority,
-    proxy_arrive: Timestamp,
-    proxy_depart: Timestamp,
+    elapsed: usize,
 }
 type MessageQueue = Mutex<PriorityQueue<MessageInternal, Priority>>;
 
 // Helper function for getting time since the epoch.
 fn time_since_epoch() -> Timestamp {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(n) => n.as_secs(),
+        Ok(n) => n.as_millis(),
         Err(_) => 0,
     }
 }
@@ -79,8 +78,7 @@ fn get(queue: State<'_, MessageQueue>) -> Option<Json<MessageOut>> {
         Json(MessageOut {
             contents: internal.0.contents.clone(),
             priority: internal.1,
-            proxy_arrive: internal.0.arrived,
-            proxy_depart: time_since_epoch(),
+            elapsed: (time_since_epoch() - internal.0.arrived) as usize,
         })
     })
 }

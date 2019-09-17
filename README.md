@@ -13,8 +13,8 @@ The value of `priority` can be set to an integer value from 0 to 99, or it will 
 
 ```json
 {
-    contents: String,
-    priority: Number,
+    "contents": "String",
+    "priority": 10,
 }
 ```
 
@@ -22,15 +22,13 @@ The value of `priority` can be set to an integer value from 0 to 99, or it will 
 
 Includes the above, also adding:
 
-The value of `proxyArrive` indicates when the proxy received the notification (as an integer unix timestamp).
-The value of `proxyDepart` and indicates when the proxy forwarded the notification (as an integer unix timestamp).
+The value of `elapsed` indicates how many seconds the message was in the queue.
 
 ```json
 {
-    contents: String,
-    priority: Number,
-    proxyArrive: Number,
-    proxyDepart: Number,
+    "contents": "String",
+    "priority": 10,
+    "elapsed": 3,
 }
 ```
 
