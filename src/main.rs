@@ -20,7 +20,6 @@ struct Message {
 
 #[post("/<id>", format="json", data="<message>")]
 fn new(id: ID, message: Json<Message>, map: State<'_, MessageMap>) -> JsonValue {
-    println!("id: {}", id);
     let mut hashmap = map.lock().expect("map lock.");
     if hashmap.contains_key(&id) {
         json!({
