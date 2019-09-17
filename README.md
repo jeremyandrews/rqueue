@@ -59,40 +59,40 @@ Add an element:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "one"}'
-{"status":"ok"}
+{"code":200,"status":"ok"}
 ```
 
 Add another element:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "two"}'
-{"status":"ok"}
+{"code":200,"status":"ok"}
 ```
 
 Get the first element:
 
 ```bash
 curl -X GET http://localhost:8000/
-{"contents":"one"}
+{"contents":"one","priority":10,"elapsed":31159}
 ```
 
 Get the second element:
 
 ```bash
 curl -X GET http://localhost:8000/
-{"contents":"two"}
+{"contents":"two","priority":10,"elapsed":26241}
 ```
 
 There's nothing else in the queue:
 
 ```bash
 curl -X GET http://localhost:8000/
-{"reason":"Resource was not found.","status":"error"}
+{"code":404,"reason":"Resource was not found.","status":"error"}
 ```
 
 Add a higher priority element to the queue:
 
 ```bash
-curl -X POST http://localhost:8000/?priority=50 -H 'Content-type: application/json' --data '{"contents": "three"}'
-{"status":"ok"}
+curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "three", "priority": 50}'
+{"code":200,"status":"ok"}
 ```
