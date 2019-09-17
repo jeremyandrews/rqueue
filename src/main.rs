@@ -7,21 +7,31 @@
 #[cfg(test)] mod tests;
 
 use std::sync::Mutex;
-use std::collections::VecDeque;
+use priority_queue::PriorityQueue;
 
 use rocket::State;
 use rocket_contrib::json::{Json, JsonValue};
 
-type MessageQueue = Mutex<VecDeque<String>>;
+type Priority = usize;
+type MessageQueue = Mutex<PriorityQueue<String, Priority>>;
 #[derive(Serialize, Deserialize)]
 struct Message {
     contents: String,
 }
 
-#[post("/", format="json", data="<message>")]
-fn new(message: Json<Message>, queue: State<'_, MessageQueue>) -> JsonValue {
+#[post("/?<priority>", format="json", data="<message>")]
+fn new(priority: Option<Priority>, message: Json<Message>, queue: State<'_, MessageQueue>) -> JsonValue {
+    let prio: Priority;
+    match priority {
+        None => {
+            prio = 10;
+        }
+        _ => {
+            prio = priority.unwrap();
+        }
+    }
     let mut messagequeue = queue.lock().expect("queue lock.");
-    messagequeue.push_back(message.0.contents);
+    messagequeue.push(message.0.contents, prio);
     json!({
         "status": "ok",
     })
@@ -30,9 +40,9 @@ fn new(message: Json<Message>, queue: State<'_, MessageQueue>) -> JsonValue {
 #[get("/", format = "json")]
 fn get(queue: State<'_, MessageQueue>) -> Option<Json<Message>> {
     let mut messagequeue = queue.lock().unwrap();
-    messagequeue.pop_front().map(|contents| {
+    messagequeue.pop().map(|contents| {
         Json(Message {
-            contents: contents.clone(),
+            contents: contents.0.clone(),
         })
     })
 }
@@ -47,9 +57,9 @@ fn not_found() -> JsonValue {
 
 fn rocket() -> rocket::Rocket {
     rocket::ignite()
-        .mount("/message", routes![new, get])
+        .mount("/", routes![new, get])
         .register(catchers![not_found])
-        .manage(Mutex::new(VecDeque::<String>::new()))
+        .manage(Mutex::new(PriorityQueue::<String, Priority>::new()))
 }
 
 fn main() {
