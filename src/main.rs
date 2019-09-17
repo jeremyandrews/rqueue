@@ -7,42 +7,80 @@
 #[cfg(test)] mod tests;
 
 use std::sync::Mutex;
-use priority_queue::PriorityQueue;
+use std::time::SystemTime;
 
 use rocket::State;
 use rocket_contrib::json::{Json, JsonValue};
+use priority_queue::PriorityQueue;
 
 type Priority = usize;
-type MessageQueue = Mutex<PriorityQueue<String, Priority>>;
+type Timestamp = u64;
+// This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]
-struct Message {
+struct MessageIn {
     contents: String,
+    priority: Option<Priority>,
+}
+// This defines the format of the message we track internally. (The
+// priority is tracked in the PriorityQueue, no need to duplicate.)
+#[derive(PartialEq, Eq, Hash)]
+struct MessageInternal {
+    contents: String,
+    arrived: Timestamp,
+}
+// This defines the format of the message we push downstream.
+#[derive(Serialize, Deserialize)]
+struct MessageOut {
+    contents: String,
+    priority: Priority,
+    proxy_arrive: Timestamp,
+    proxy_depart: Timestamp,
+}
+type MessageQueue = Mutex<PriorityQueue<MessageInternal, Priority>>;
+
+// Helper function for getting time since the epoch.
+fn time_since_epoch() -> Timestamp {
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => n.as_secs(),
+        Err(_) => 0,
+    }
 }
 
-#[post("/?<priority>", format="json", data="<message>")]
-fn new(priority: Option<Priority>, message: Json<Message>, queue: State<'_, MessageQueue>) -> JsonValue {
+// Handle POSTs to the proxy.
+#[post("/", format="json", data="<message>")]
+fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>) -> JsonValue {
+    // Priority is optional, set a default if not provided.
     let prio: Priority;
-    match priority {
+    match message.0.priority {
         None => {
             prio = 10;
         }
         _ => {
-            prio = priority.unwrap();
+            prio = message.0.priority.unwrap();
         }
     }
     let mut messagequeue = queue.lock().expect("queue lock.");
-    messagequeue.push(message.0.contents, prio);
+    let internal = MessageInternal {
+        contents: message.0.contents,
+        arrived: time_since_epoch(),
+    };
+    messagequeue.push(internal, prio);
     json!({
         "status": "ok",
+        "code": 200,
     })
 }
 
+// Temporary: ultimately the proxy will push this data.
 #[get("/", format = "json")]
-fn get(queue: State<'_, MessageQueue>) -> Option<Json<Message>> {
+fn get(queue: State<'_, MessageQueue>) -> Option<Json<MessageOut>> {
     let mut messagequeue = queue.lock().unwrap();
-    messagequeue.pop().map(|contents| {
-        Json(Message {
-            contents: contents.0.clone(),
+    messagequeue.pop().map(|internal| {
+        Json(MessageOut {
+            contents: internal.0.contents.clone(),
+            priority: internal.1,
+            proxy_arrive: internal.0.arrived,
+            proxy_depart: time_since_epoch(),
         })
     })
 }
@@ -51,6 +89,7 @@ fn get(queue: State<'_, MessageQueue>) -> Option<Json<Message>> {
 fn not_found() -> JsonValue {
     json!({
         "status": "error",
+        "code": 404,
         "reason": "Resource was not found.",
     })
 }
@@ -59,7 +98,7 @@ fn rocket() -> rocket::Rocket {
     rocket::ignite()
         .mount("/", routes![new, get])
         .register(catchers![not_found])
-        .manage(Mutex::new(PriorityQueue::<String, Priority>::new()))
+        .manage(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()))
 }
 
 fn main() {

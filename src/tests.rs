@@ -96,16 +96,16 @@ fn post_priority_and_get() {
     assert_eq!(res.status(), Status::Ok);
 
     // Add a second item to the queue, lower priority (5)
-    let res = client.post("/?priority=5")
+    let res = client.post("/")
         .header(ContentType::JSON)
-        .body(r#"{ "contents": "Item two" }"#)
+        .body(r#"{ "contents": "Item two", "priority": 5 }"#)
         .dispatch();
     assert_eq!(res.status(), Status::Ok);
 
     // Add a third item to the queue, higher priority (20)
-    let res = client.post("/?priority=20")
+    let res = client.post("/")
         .header(ContentType::JSON)
-        .body(r#"{ "contents": "Item three" }"#)
+        .body(r#"{ "contents": "Item three", "priority": 20 }"#)
         .dispatch();
     assert_eq!(res.status(), Status::Ok);
 
@@ -132,9 +132,9 @@ fn post_priority_and_get() {
     assert_eq!(res.status(), Status::NotFound);
 
     // We can add another item to the queue
-    let res = client.post("/?priority=1000")
+    let res = client.post("/")
         .header(ContentType::JSON)
-        .body(r#"{ "contents": "Item four" }"#)
+        .body(r#"{ "contents": "Item four", "priority": 1000 }"#)
         .dispatch();
     assert_eq!(res.status(), Status::Ok);
 
