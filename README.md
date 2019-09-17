@@ -1,6 +1,6 @@
-# RProxy
+# RQueue
 
-A prioritized notifications proxy.
+A prioritized notifications queing proxy.
 
 If not otherwise specified, notifications have a priority of 10. Higher priority notifications will be delivered before lower priority notifications.
 
