@@ -4,55 +4,34 @@
 #[macro_use] extern crate rocket_contrib;
 #[macro_use] extern crate serde_derive;
 
+#[cfg(test)] mod tests;
+
 use std::sync::Mutex;
-use std::collections::HashMap;
+use std::collections::VecDeque;
 
 use rocket::State;
 use rocket_contrib::json::{Json, JsonValue};
 
-type ID = usize;
-type MessageMap = Mutex<HashMap<ID, String>>;
+type MessageQueue = Mutex<VecDeque<String>>;
 #[derive(Serialize, Deserialize)]
 struct Message {
-    id: Option<ID>,
     contents: String,
 }
 
-#[post("/<id>", format="json", data="<message>")]
-fn new(id: ID, message: Json<Message>, map: State<'_, MessageMap>) -> JsonValue {
-    let mut hashmap = map.lock().expect("map lock.");
-    if hashmap.contains_key(&id) {
-        json!({
-            "status": "error",
-            "reason": "ID exists. Try put.",
-        })
-    } else {
-        hashmap.insert(id, message.0.contents);
-        json!({
-            "status": "ok",
-        })
-    }
+#[post("/", format="json", data="<message>")]
+fn new(message: Json<Message>, queue: State<'_, MessageQueue>) -> JsonValue {
+    let mut messagequeue = queue.lock().expect("queue lock.");
+    messagequeue.push_back(message.0.contents);
+    json!({
+        "status": "ok",
+    })
 }
 
-#[put("/<id>", format="json", data="<message>")]
-fn update(id: ID, message: Json<Message>, map:State<'_, MessageMap>) -> Option<JsonValue> {
-    let mut hashmap = map.lock().unwrap();
-    if hashmap.contains_key(&id) {
-        hashmap.insert(id, message.0.contents);
-        Some(json!({
-            "status": "ok",
-        }))
-    } else {
-        None
-    }
-}
-
-#[get("/<id>", format = "json")]
-fn get(id: ID, map: State<'_, MessageMap>) -> Option<Json<Message>> {
-    let hashmap = map.lock().unwrap();
-    hashmap.get(&id).map(|contents| {
+#[get("/", format = "json")]
+fn get(queue: State<'_, MessageQueue>) -> Option<Json<Message>> {
+    let mut messagequeue = queue.lock().unwrap();
+    messagequeue.pop_front().map(|contents| {
         Json(Message {
-            id: Some(id),
             contents: contents.clone(),
         })
     })
@@ -68,9 +47,9 @@ fn not_found() -> JsonValue {
 
 fn rocket() -> rocket::Rocket {
     rocket::ignite()
-        .mount("/message", routes![new, update, get])
+        .mount("/message", routes![new, get])
         .register(catchers![not_found])
-        .manage(Mutex::new(HashMap::<ID, String>::new()))
+        .manage(Mutex::new(VecDeque::<String>::new()))
 }
 
 fn main() {
