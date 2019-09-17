@@ -7,7 +7,23 @@ A notification proxy.
 Converted the Rocket JSON example to use a simple FIFO queue:
 <https://github.com/SergioBenitez/Rocket/tree/v0.4/examples/json>
 
-To test:
+Built on Rocket, which requires Rust nightly:
+
+```bash
+rustup default nightly
+```
+
+Includes tests, which can be run the standard way:
+
+```bash
+cargo test
+```
+
+It's also possible to test manually with curl, first run the daemon:
+
+```bash
+cargo run
+```
 
 Add an element:
 
