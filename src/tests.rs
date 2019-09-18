@@ -37,14 +37,14 @@ fn post_and_get() {
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item one" }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Add a second item to the queue
     let res = client.post("/")
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item two" }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Retrieve the first item from the queue
     let mut res = client.get("/").header(ContentType::JSON).dispatch();
@@ -67,7 +67,7 @@ fn post_and_get() {
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item three" }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Retrieve the third item from the queue
     let mut res = client.get("/").header(ContentType::JSON).dispatch();
@@ -93,21 +93,21 @@ fn post_priority_and_get() {
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item one" }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Add a second item to the queue, lower priority (5)
     let res = client.post("/")
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item two", "priority": 5 }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Add a third item to the queue, higher priority (20)
     let res = client.post("/")
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item three", "priority": 20 }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Retrieve the highest priority (third) item from the queue
     let mut res = client.get("/").header(ContentType::JSON).dispatch();
@@ -136,7 +136,7 @@ fn post_priority_and_get() {
         .header(ContentType::JSON)
         .body(r#"{ "contents": "Item four", "priority": 1000 }"#)
         .dispatch();
-    assert_eq!(res.status(), Status::Ok);
+    assert_eq!(res.status(), Status::Accepted);
 
     // Retrieve the fourth item from the queue
     let mut res = client.get("/").header(ContentType::JSON).dispatch();

@@ -12,6 +12,9 @@ use std::time::SystemTime;
 use rocket::State;
 use rocket_contrib::json::{Json, JsonValue};
 use priority_queue::PriorityQueue;
+use rocket::http::{ContentType, Status};
+use rocket::response;
+use rocket::request;
 
 type Priority = usize;
 type Timestamp = u128;
@@ -29,6 +32,12 @@ struct MessageInternal {
     arrived: Timestamp,
 }
 type MessageQueue = Mutex<PriorityQueue<MessageInternal, Priority>>;
+// Set an HTTP status when responding with JSON objects
+#[derive(Debug)]
+struct QueueApiResponse {
+    json: JsonValue,
+    status: Status,
+}
 
 // Helper function for getting time since the epoch in milliseconds.
 fn time_since_epoch() -> Timestamp {
@@ -38,9 +47,19 @@ fn time_since_epoch() -> Timestamp {
     }
 }
 
+// Customer JSON responder, includes an HTTP status message.
+impl<'r> response::Responder<'r> for QueueApiResponse {
+    fn respond_to(self, req: &request::Request) -> response::Result<'r> {
+        response::Response::build_from(self.json.respond_to(&req).unwrap())
+            .status(self.status)
+            .header(ContentType::JSON)
+            .ok()
+    }
+}
+
 // Accept incoming messages for the proxy to queue.
 #[post("/", format="json", data="<message>")]
-fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>) -> JsonValue {
+fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>) -> QueueApiResponse {
     // Priority is optional, set a default if not provided.
     let priority: Priority;
     match message.0.priority {
@@ -61,38 +80,47 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>) -> JsonValue {
     // Grab lock and add message to queue
     let mut messagequeue = queue.lock().expect("queue lock.");
     messagequeue.push(internal, priority);
-    json!({
-        "status": "ok",
-        "code": 200,
-    })
+    QueueApiResponse {
+        json: json!({
+                "status": "accepted",
+                "code": 202,
+            }),
+        status: Status::Accepted,
+    }
 }
 
 // Temporary: ultimately the proxy will push this data.
 #[get("/", format = "json")]
-fn get(queue: State<'_, MessageQueue>) -> Option<JsonValue> {
+fn get(queue: State<'_, MessageQueue>) -> Option<QueueApiResponse> {
     let mut messagequeue = queue.lock().unwrap();
     messagequeue.pop().map(|internal| {
         // Message queue returns a tuple, the internal data strucutre and the priority.
         // Use this to build the JSON response on-the-fly.
-        json!({
-            "status": "ok",
-            "code": 200,
-            "data": {
-                "contents": internal.0.contents.clone(),
-                "priority": internal.0.priority,
-                "elapsed": (time_since_epoch() - internal.0.arrived) as usize,
-            }
-        })
+        QueueApiResponse {
+            json: json!({
+                    "status": "ok",
+                    "code": 200,
+                    "data": {
+                        "contents": internal.0.contents.clone(),
+                        "priority": internal.0.priority,
+                        "elapsed": (time_since_epoch() - internal.0.arrived) as usize,
+                    }
+                }),
+            status: Status::Ok,
+        }
     })
 }
 
 #[catch(404)]
-fn not_found() -> JsonValue {
-    json!({
-        "status": "error",
-        "code": 404,
-        "reason": "Resource was not found.",
-    })
+fn not_found() -> QueueApiResponse {
+    QueueApiResponse {
+        json: json!({
+                "status": "error",
+                "code": 404,
+                "reason": "Resource was not found.",
+            }),
+        status: Status::NotFound,
+    }
 }
 
 fn rocket() -> rocket::Rocket {
