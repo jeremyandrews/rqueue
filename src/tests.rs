@@ -11,7 +11,7 @@ fn invalid_content() {
     assert_eq!(res.status(), Status::NotFound);
     let body = res.body_string().unwrap();
     assert!(body.contains("error"));
-    assert!(body.contains("Resource was not found."));
+    assert!(body.contains("Empty queue."));
 
     // Try to get a message with an invalid URL.
     let mut res = client.get("/nothing/here").header(ContentType::JSON).dispatch();

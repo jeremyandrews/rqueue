@@ -117,7 +117,7 @@ fn not_found() -> QueueApiResponse {
         json: json!({
                 "status": "error",
                 "code": 404,
-                "reason": "Resource was not found.",
+                "reason": "Empty queue.",
             }),
         status: Status::NotFound,
     }

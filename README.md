@@ -59,14 +59,14 @@ Add an element:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "one"}'
-{"code":200,"status":"ok"}
+{"code":202,"status":"accepted"}
 ```
 
 Add another element:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "two"}'
-{"code":200,"status":"ok"}
+{"code":202,"status":"accepted"}
 ```
 
 Get the first element:
@@ -94,5 +94,5 @@ Add a higher priority element to the queue:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "three", "priority": 50}'
-{"code":200,"status":"ok"}
+{"code":202,"status":"accepted"}
 ```
