@@ -97,3 +97,15 @@ A higher priority element can be added to the queue using the `priority` paramet
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "three", "priority": 50}'
 {"code":202,"status":"accepted"}
 ```
+
+## TODO
+
+* Track daemon uptime (and optionally expose as debug)
+* Track response timing (and expose as debug/log)
+* Optionally require configurable JWT authentication to post to queue
+* Add configuration for enabling/disabling debug output
+* Implement method for pushing queued data via HTTP/S
+* Add configurable logging
+* Add configuration to cap memory usage (and track memory usage)
+* Implement disk-backing for items in queue over configurable amount of time
+* Add configuration to cap storage usage (and track storage useage) for disk-backing
