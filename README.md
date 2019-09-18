@@ -22,13 +22,13 @@ The value of `priority` can be set to an integer value from 0 to 99, or it will 
 
 Includes the above, also adding:
 
-The value of `elapsed` indicates how many seconds the message was in the queue.
+The value of `elapsed` indicates how many milliseconds the message was in the queue.
 
 ```json
 {
     "contents": "String",
     "priority": 10,
-    "elapsed": 3,
+    "elapsed": 325,
 }
 ```
 

@@ -21,23 +21,16 @@ struct MessageIn {
     contents: String,
     priority: Option<Priority>,
 }
-// This defines the format of the message we track internally. (The
-// priority is tracked in the PriorityQueue, no need to duplicate.)
+// This defines the format of the message we track internally.
 #[derive(PartialEq, Eq, Hash)]
 struct MessageInternal {
     contents: String,
-    arrived: Timestamp,
-}
-// This defines the format of the message we push downstream.
-#[derive(Serialize, Deserialize)]
-struct MessageOut {
-    contents: String,
     priority: Priority,
-    elapsed: usize,
+    arrived: Timestamp,
 }
 type MessageQueue = Mutex<PriorityQueue<MessageInternal, Priority>>;
 
-// Helper function for getting time since the epoch.
+// Helper function for getting time since the epoch in milliseconds.
 fn time_since_epoch() -> Timestamp {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
@@ -45,25 +38,29 @@ fn time_since_epoch() -> Timestamp {
     }
 }
 
-// Handle POSTs to the proxy.
+// Accept incoming messages for the proxy to queue.
 #[post("/", format="json", data="<message>")]
 fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>) -> JsonValue {
     // Priority is optional, set a default if not provided.
-    let prio: Priority;
+    let priority: Priority;
     match message.0.priority {
         None => {
-            prio = 10;
+            priority = 10;
         }
         _ => {
-            prio = message.0.priority.unwrap();
+            priority = message.0.priority.unwrap();
         }
     }
-    let mut messagequeue = queue.lock().expect("queue lock.");
+    // Internal state, the queue 
     let internal = MessageInternal {
         contents: message.0.contents,
+        priority: priority,
         arrived: time_since_epoch(),
     };
-    messagequeue.push(internal, prio);
+
+    // Grab lock and add message to queue
+    let mut messagequeue = queue.lock().expect("queue lock.");
+    messagequeue.push(internal, priority);
     json!({
         "status": "ok",
         "code": 200,
@@ -72,13 +69,19 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>) -> JsonValue {
 
 // Temporary: ultimately the proxy will push this data.
 #[get("/", format = "json")]
-fn get(queue: State<'_, MessageQueue>) -> Option<Json<MessageOut>> {
+fn get(queue: State<'_, MessageQueue>) -> Option<JsonValue> {
     let mut messagequeue = queue.lock().unwrap();
     messagequeue.pop().map(|internal| {
-        Json(MessageOut {
-            contents: internal.0.contents.clone(),
-            priority: internal.1,
-            elapsed: (time_since_epoch() - internal.0.arrived) as usize,
+        // Message queue returns a tuple, the internal data strucutre and the priority.
+        // Use this to build the JSON response on-the-fly.
+        json!({
+            "status": "ok",
+            "code": 200,
+            "data": {
+                "contents": internal.0.contents.clone(),
+                "priority": internal.0.priority,
+                "elapsed": (time_since_epoch() - internal.0.arrived) as usize,
+            }
         })
     })
 }
