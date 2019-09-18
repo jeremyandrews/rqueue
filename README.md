@@ -34,28 +34,29 @@ The value of `elapsed` indicates how many milliseconds the message was in the qu
 
 ## Notes
 
-Converted the Rocket JSON example to use a prioritized queue:
+Started with the Rocket JSON example:
 <https://github.com/SergioBenitez/Rocket/tree/v0.4/examples/json>
 
-Built on Rocket, which requires Rust nightly:
+Reworked to implement a prioritized queue for proxying notifications. As it's built on Rocket,
+it requires Rust nightly:
 
 ```bash
 rustup default nightly
 ```
 
-Includes tests, which can be run the standard way:
+Tests can be run as follows:
 
 ```bash
 cargo test
 ```
 
-It's also possible to test manually with curl, first run the daemon:
+Alternatively, the daemon can be tested manually with curl. First, run the daemon:
 
 ```bash
 cargo run
 ```
 
-Add an element:
+Now, for example, add an element to the queue:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "one"}'
@@ -69,14 +70,14 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
 {"code":202,"status":"accepted"}
 ```
 
-Get the first element:
+Get the first element (a default priority of 10 was auto-assigned):
 
 ```bash
 curl -X GET http://localhost:8000/
 {"contents":"one","priority":10,"elapsed":31159}
 ```
 
-Get the second element:
+Get the second element (when not using priorities, it's a FIFO queue):
 
 ```bash
 curl -X GET http://localhost:8000/
@@ -87,10 +88,10 @@ There's nothing else in the queue:
 
 ```bash
 curl -X GET http://localhost:8000/
-{"code":404,"reason":"Resource was not found.","status":"error"}
+{"code":404,"reason":"Empty queue.","status":"error"}
 ```
 
-Add a higher priority element to the queue:
+A higher priority element can be added to the queue using the `priority` parameter:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "three", "priority": 50}'
