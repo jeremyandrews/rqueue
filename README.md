@@ -9,7 +9,7 @@ If not otherwise specified, notifications have a priority of 10. Higher priority
 ### Message in
 
 The value of `contents` must be set when POSTing to the proxy, and contains any string.
-The value of `priority` can be set to an integer value from 0 to 99, or it will automatically be set to 10.
+The value of `priority` can be set to an unsigned integer value from 0 to 255, or it will automatically be set to 10.
 
 ```json
 {
@@ -102,10 +102,11 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
 
 * Track daemon uptime (and optionally expose as debug)
 * Track response timing (and expose as debug/log)
+* Provide better error handling for invalid priority
 * Optionally require configurable JWT authentication to post to queue
-* Add configuration for enabling/disabling debug output
 * Implement method for pushing queued data via HTTP/S
+* Implement disk-backing for items in queue over configurable amount of time
+* Add configuration for enabling/disabling debug output
 * Add configurable logging
 * Add configuration to cap memory usage (and track memory usage)
-* Implement disk-backing for items in queue over configurable amount of time
 * Add configuration to cap storage usage (and track storage useage) for disk-backing

@@ -17,7 +17,7 @@ use rocket_contrib::json::{Json, JsonValue};
 
 use priority_queue::PriorityQueue;
 
-type Priority = usize;
+type Priority = u8;
 type Timestamp = u128;
 // This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]

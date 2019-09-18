@@ -22,6 +22,20 @@ fn invalid_content() {
     // Try to put a message without a proper body.
     let res = client.post("/").header(ContentType::JSON).dispatch();
     assert_eq!(res.status(), Status::BadRequest);
+
+    // Priority can only be 0 through 255, so 256 will fail.
+    let res = client.post("/")
+        .header(ContentType::JSON)
+        .body(r#"{ "contents": "Failed item", "priority": 256 }"#)
+        .dispatch();
+    assert_eq!(res.status(), Status::UnprocessableEntity);
+
+    // For the same reason, -1 will also fail.
+    let res = client.post("/")
+        .header(ContentType::JSON)
+        .body(r#"{ "contents": "Failed item", "priority": -1 }"#)
+        .dispatch();
+    assert_eq!(res.status(), Status::UnprocessableEntity);
 }
 
 #[test]
@@ -134,7 +148,7 @@ fn post_priority_and_get() {
     // We can add another item to the queue
     let res = client.post("/")
         .header(ContentType::JSON)
-        .body(r#"{ "contents": "Item four", "priority": 1000 }"#)
+        .body(r#"{ "contents": "Item four", "priority": 255 }"#)
         .dispatch();
     assert_eq!(res.status(), Status::Accepted);
 
