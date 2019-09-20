@@ -100,7 +100,6 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
 
 ## TODO
 
-* Track daemon uptime (and optionally expose as debug)
 * Track response timing (and expose as debug/log)
 * Provide better error handling for invalid priority
 * Optionally require configurable JWT authentication to post to queue

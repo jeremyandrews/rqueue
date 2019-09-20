@@ -7,7 +7,7 @@
 #[cfg(test)] mod tests;
 
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rocket::{State, Request, response};
@@ -51,6 +51,9 @@ struct QueueApiResponse {
     status: Status,
 }
 
+#[derive(Debug)]
+struct ServerStarted(Duration);
+
 // Customer JSON responder, includes an HTTP status message.
 impl<'r> response::Responder<'r> for QueueApiResponse {
     fn respond_to(self, req: &Request) -> response::Result<'r> {
@@ -62,16 +65,26 @@ impl<'r> response::Responder<'r> for QueueApiResponse {
 }
 
 // Helper function for getting time since the epoch in milliseconds.
-fn time_since_epoch() -> Timestamp {
+fn time_since_epoch() -> Duration {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => n,
+        Err(_) => Duration::from_secs(0),
+    }
+}
+
+// Helper function for getting elapsed time in milliseconds (as usize).
+fn milliseconds_since_timestamp(timestamp: Duration) -> usize {
+    let now = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
         Err(_) => 0,
-    }
+    };
+    // Convert to usize for JSON compatability -- @TODO handle time going backwards
+    (now - timestamp.as_millis()) as usize
 }
 
 // Accept incoming messages for the proxy to queue.
 #[post("/", format="json", data="<message>")]
-fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State<Counters>) -> QueueApiResponse {
+fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State<Counters>, server_started: State<ServerStarted>) -> QueueApiResponse {
     // A POST was routed here, requesting to add something to the queue.
     let queue_requests = counters.queue_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -89,7 +102,7 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State
     let internal = MessageInternal {
         contents: message.0.contents,
         priority: priority,
-        arrived: time_since_epoch(),
+        arrived: time_since_epoch().as_millis(),
     };
 
     // Grab lock and add message to queue
@@ -111,6 +124,7 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State
                     "queued": queued,
                     "proxied": proxied,
                     "in_queue": in_queue,
+                    "uptime": milliseconds_since_timestamp(server_started.0),
                 },
             }),
         status: Status::Accepted,
@@ -119,7 +133,7 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State
 
 // Temporary: ultimately the proxy will push this data.
 #[get("/", format = "json")]
-fn get(queue: State<'_, MessageQueue>, counters: State<Counters>) -> Option<QueueApiResponse> {
+fn get(queue: State<'_, MessageQueue>, counters: State<Counters>, server_started: State<ServerStarted>) -> Option<QueueApiResponse> {
     // A GET was routed here, requesting to get something from the queue.
     let proxy_requests = counters.proxy_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -141,7 +155,7 @@ fn get(queue: State<'_, MessageQueue>, counters: State<Counters>) -> Option<Queu
                     "data": {
                         "contents": internal.0.contents.clone(),
                         "priority": internal.0.priority,
-                        "elapsed": (time_since_epoch() - internal.0.arrived) as usize,
+                        "elapsed": (time_since_epoch().as_millis() - internal.0.arrived) as usize,
                     },
                     "debug": {
                         "queue_requests": queue_requests,
@@ -149,6 +163,7 @@ fn get(queue: State<'_, MessageQueue>, counters: State<Counters>) -> Option<Queu
                         "queued": queued,
                         "proxied": proxied,
                         "in_queue": in_queue,
+                        "uptime": milliseconds_since_timestamp(server_started.0),
                     },
                 }),
             status: Status::Ok,
@@ -173,6 +188,7 @@ fn rocket() -> rocket::Rocket {
         .register(catchers![not_found])
         .manage(Counters::default())
         .manage(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()))
+        .manage(ServerStarted(time_since_epoch()))
         .mount("/", routes![new, get])
 }
 
