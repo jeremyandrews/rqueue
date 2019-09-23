@@ -68,7 +68,7 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
     "code": 202,
     "debug": {
         "in_queue": 1,
-        "processing": 2,
+        "process_time": 2,
         "proxied": 0,
         "proxy_requests": 0,
         "queue_requests": 1,
@@ -82,7 +82,7 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
 The contents of the debug array will only be visible when the daemon is running in debug mode. They have the following meanings:
 
 * `in_queue` indicates how many items are currently queued
-* `processing` indicates how many milliseconds it took to process your PUT
+* `process_time` indicates how many milliseconds it took to process your PUT
 * `proxied` indicates how many items have been added to then read from the queue
 * `proxy_requests` indicates how many times a request has been made to retreive something from the queue
 * `queue_requests` indicates how many times a request has been made to store something in the queue
@@ -97,7 +97,7 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
     "code": 202,
     "debug": {
         "in_queue": 2,
-        "processing": 2,
+        "process_time": 2,
         "proxied": 0,
         "proxy_requests": 0,
         "queue_requests": 2,
@@ -123,7 +123,7 @@ curl -X GET http://localhost:8000/
     },
     "debug": {
         "in_queue": 1,
-        "processing": 0,
+        "process_time": 0,
         "proxied": 1,
         "proxy_requests": 1,
         "queue_requests": 2,
@@ -147,7 +147,7 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
     "code": 202,
     "debug": {
         "in_queue": 2,
-        "processing": 2,
+        "process_time": 2,
         "proxied": 1,
         "proxy_requests": 1,
         "queue_requests": 3,
@@ -172,7 +172,7 @@ curl -X GET http://localhost:8000/
     },
     "debug": {
         "in_queue": 1,
-        "processing": 0,
+        "process_time": 0,
         "proxied": 2,
         "proxy_requests": 2,
         "queue_requests": 3,
@@ -193,7 +193,7 @@ curl -X GET http://localhost:8000/
     },
     "debug": {
         "in_queue": 0,
-        "processing": 0,
+        "process_time": 0,
         "proxied": 3,
         "proxy_requests": 3,
         "queue_requests": 3,
