@@ -18,6 +18,7 @@ use rocket::request::{self, FromRequest};
 use rocket_contrib::json::{Json, JsonValue};
 
 use priority_queue::PriorityQueue;
+use uuid::Uuid;
 
 type Priority = u8;
 type Timestamp = u128;
@@ -33,6 +34,7 @@ struct MessageInternal {
     contents: String,
     priority: Priority,
     arrived: Timestamp,
+    uuid: Uuid,
 }
 type MessageQueue = Mutex<PriorityQueue<MessageInternal, Priority>>;
 
@@ -120,6 +122,7 @@ fn new(
         contents: message.0.contents,
         priority: priority,
         arrived: time_since_epoch().as_millis(),
+        uuid: Uuid::new_v4(),
     };
 
     // Grab lock and add message to queue
@@ -179,6 +182,7 @@ fn get(
                         "contents": internal.0.contents.clone(),
                         "priority": internal.0.priority,
                         "elapsed": (time_since_epoch().as_millis() - internal.0.arrived) as usize,
+                        "uuid": internal.0.uuid,
                     },
                     "debug": {
                         "queue_requests": queue_requests,

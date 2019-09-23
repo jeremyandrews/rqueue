@@ -10,8 +10,5 @@ serde = "^1.0"
 serde_json = "^1.0"
 serde_derive = "^1.0"
 priority-queue = "^0.6"
-
-[dependencies.rocket_contrib]
-version = "^0.4"
-default-features = false
-features = ["json"]
+rocket_contrib = { default-features = false, features=["json"], version = "^0.4" }
+uuid = { features = ["serde", "v4"], version = "^0.7" }
