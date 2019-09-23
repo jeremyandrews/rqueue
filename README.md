@@ -100,7 +100,6 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
 
 ## TODO
 
-* Track response timing (and expose as debug/log)
 * Provide better error handling for invalid priority
 * Optionally require configurable JWT authentication to post to queue
 * Implement method for pushing queued data via HTTP/S

@@ -11,9 +11,11 @@ use std::time::{SystemTime, Duration};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rocket::{State, Request, response};
+use rocket::fairing::AdHoc;
 use rocket::http::{ContentType, Status};
+use rocket::outcome::Outcome;
+use rocket::request::{self, FromRequest};
 use rocket_contrib::json::{Json, JsonValue};
-
 
 use priority_queue::PriorityQueue;
 
@@ -44,15 +46,15 @@ struct Counters {
     in_queue: AtomicUsize,
 }
 
+#[derive(Clone, Debug)]
+struct Started(Duration);
+
 // Set an HTTP status when responding with JSON objects
 #[derive(Debug)]
 struct QueueApiResponse {
     json: JsonValue,
     status: Status,
 }
-
-#[derive(Debug)]
-struct ServerStarted(Duration);
 
 // Customer JSON responder, includes an HTTP status message.
 impl<'r> response::Responder<'r> for QueueApiResponse {
@@ -61,6 +63,15 @@ impl<'r> response::Responder<'r> for QueueApiResponse {
             .status(self.status)
             .header(ContentType::JSON)
             .ok()
+    }
+}
+
+impl<'a, 'r> FromRequest<'a, 'r> for Started {
+    type Error = std::convert::Infallible;
+
+    fn from_request(request: &'a Request<'r>) -> request::Outcome<Self, Self::Error> {
+        let request_started: &Started = request.local_cache(|| Started(Duration::from_secs(0)));
+        Outcome::Success(request_started.clone())
     }
 }
 
@@ -84,7 +95,13 @@ fn milliseconds_since_timestamp(timestamp: Duration) -> usize {
 
 // Accept incoming messages for the proxy to queue.
 #[post("/", format="json", data="<message>")]
-fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State<Counters>, server_started: State<ServerStarted>) -> QueueApiResponse {
+fn new(
+        message: Json<MessageIn>,
+        queue: State<'_, MessageQueue>,
+        counters: State<Counters>,
+        server_started: State<Started>,
+        request_started: Started,
+    ) -> QueueApiResponse {
     // A POST was routed here, requesting to add something to the queue.
     let queue_requests = counters.queue_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -125,6 +142,7 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State
                     "proxied": proxied,
                     "in_queue": in_queue,
                     "uptime": milliseconds_since_timestamp(server_started.0),
+                    "processing": milliseconds_since_timestamp(request_started.0),
                 },
             }),
         status: Status::Accepted,
@@ -133,7 +151,12 @@ fn new(message: Json<MessageIn>, queue: State<'_, MessageQueue>, counters: State
 
 // Temporary: ultimately the proxy will push this data.
 #[get("/", format = "json")]
-fn get(queue: State<'_, MessageQueue>, counters: State<Counters>, server_started: State<ServerStarted>) -> Option<QueueApiResponse> {
+fn get(
+        queue: State<'_, MessageQueue>,
+        counters: State<Counters>,
+        server_started: State<Started>,
+        request_started: Started,
+    ) -> Option<QueueApiResponse> {
     // A GET was routed here, requesting to get something from the queue.
     let proxy_requests = counters.proxy_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -164,6 +187,7 @@ fn get(queue: State<'_, MessageQueue>, counters: State<Counters>, server_started
                         "proxied": proxied,
                         "in_queue": in_queue,
                         "uptime": milliseconds_since_timestamp(server_started.0),
+                        "processing": milliseconds_since_timestamp(request_started.0),
                     },
                 }),
             status: Status::Ok,
@@ -188,7 +212,10 @@ fn rocket() -> rocket::Rocket {
         .register(catchers![not_found])
         .manage(Counters::default())
         .manage(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()))
-        .manage(ServerStarted(time_since_epoch()))
+        .manage(Started(time_since_epoch()))
+        .attach(AdHoc::on_request("Time Request", |req, _| {
+            req.local_cache(|| Started(time_since_epoch()));
+        }))
         .mount("/", routes![new, get])
 }
 
