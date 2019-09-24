@@ -19,6 +19,7 @@ use rocket_contrib::json::{Json, JsonValue};
 
 use priority_queue::PriorityQueue;
 use uuid::Uuid;
+use sha2::{Sha256, Digest};
 
 type Priority = u8;
 type Timestamp = u128;
@@ -26,12 +27,14 @@ type Timestamp = u128;
 #[derive(Serialize, Deserialize)]
 struct MessageIn {
     contents: String,
+    sha256: Option<String>,
     priority: Option<Priority>,
 }
 // This defines the format of the message we track internally.
 #[derive(PartialEq, Eq, Hash)]
 struct MessageInternal {
     contents: String,
+    sha256: String,
     priority: Priority,
     arrived: Timestamp,
     uuid: Uuid,
@@ -107,6 +110,34 @@ fn new(
     // A POST was routed here, requesting to add something to the queue.
     let queue_requests = counters.queue_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
+    // Generate a Sha256 of the message contents.
+    let mut hasher = Sha256::new();
+    hasher.input(message.0.contents.as_bytes());
+    let sha256 = format!("{:x}", hasher.result());
+
+    // If a Sha256 was provided, validate it
+    match message.0.sha256 {
+        None => {
+            // The Sha256 is not required.
+        },
+        _ => {
+            let sha256_received = message.0.sha256.unwrap();
+            if sha256 != sha256_received {
+                return QueueApiResponse {
+                    json: json!({
+                            "status": "invalid sha256",
+                            "code": 400,
+                            "debug": {
+                                "expected_sha256": sha256,
+                                "received_sha256": sha256_received,
+                            },
+                        }),
+                    status: Status::BadRequest,
+                };
+            }
+        },
+    }
+
     // Priority is optional, set a default if not provided.
     let priority: Priority;
     match message.0.priority {
@@ -120,6 +151,7 @@ fn new(
     // Internal state, the queue 
     let internal = MessageInternal {
         contents: message.0.contents,
+        sha256: sha256,
         priority: priority,
         arrived: time_since_epoch().as_millis(),
         uuid: Uuid::new_v4(),
@@ -180,6 +212,7 @@ fn get(
                     "code": 200,
                     "data": {
                         "contents": internal.0.contents.clone(),
+                        "sha256": internal.0.sha256.clone(),
                         "priority": internal.0.priority,
                         "elapsed": (time_since_epoch().as_millis() - internal.0.arrived) as usize,
                         "uuid": internal.0.uuid,

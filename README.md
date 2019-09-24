@@ -10,13 +10,17 @@ If not otherwise specified, notifications have a priority of 10. Higher priority
 
 * `contents` must be set, and can contain any string. It is generally assumed this will be an encrypted blog.
 * `priority` is optional, and can contain an unsigned integer value from 0 to 255; if empty it will automatically be set to 10.
+* `sha256` is optional, and if set must be the sha256 of `contents`
 
 ```json
 {
     "contents": "String",
+    "sha256": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
     "priority": 10,
 }
 ```
+
+If `sha256` is set to someting other than the sha256() of `contents`, the message is not accepted.
 
 ### Message out
 
@@ -30,6 +34,7 @@ Resulting in the following structure:
 ```json
 {
     "uuid": "String",
+    "sha256": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
     "priority": 10,
     "contents": "String",
     "elapsed": 325,
@@ -38,11 +43,7 @@ Resulting in the following structure:
 
 ## Notes
 
-Started with the Rocket JSON example:
-<https://github.com/SergioBenitez/Rocket/tree/v0.4/examples/json>
-
-Reworked to implement a prioritized queue for proxying notifications. As it's built on Rocket,
-it requires Rust nightly:
+Rocket requires the nightly version of Rust:
 
 ```bash
 rustup default nightly
@@ -54,13 +55,13 @@ Tests can be run as follows:
 cargo test
 ```
 
-Alternatively, the daemon can be tested manually with curl. First, run the daemon:
+Alternatively, the daemon can be tested manually. First, run the daemon:
 
 ```bash
 cargo run
 ```
 
-Now, for example, add an object to the queue:
+Now, for example, add an object to the queue with curl:
 
 ```bash
 curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '{"contents": "one"}'
@@ -68,12 +69,12 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
     "code": 202,
     "debug": {
         "in_queue": 1,
-        "process_time": 2,
+        "process_time": 1,
         "proxied": 0,
         "proxy_requests": 0,
         "queue_requests": 1,
         "queued": 1,
-        "uptime": 9558
+        "uptime": 13587
     },
     "status": "accepted"
 }
@@ -97,12 +98,12 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
     "code": 202,
     "debug": {
         "in_queue": 2,
-        "process_time": 2,
+        "process_time": 1,
         "proxied": 0,
         "proxy_requests": 0,
         "queue_requests": 2,
         "queued": 2,
-        "uptime": 267122
+        "uptime": 46589
     },
     "status": "accepted"
 }
@@ -112,13 +113,13 @@ Now, we can grab the first object from the queue. It has been auto-assigned a pr
 
 ```bash
 curl -X GET http://localhost:8000/
-{"contents":"one","priority":10,"elapsed":31159}
 {
     "code": 200,
     "data": {
         "contents": "one",
-        "elapsed": 336598,
+        "elapsed": 71056,
         "priority": 10,
+        "sha256": "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
         "uuid": "ac782fc0-1fae-42e5-83a3-790e9c63a122"
     },
     "debug": {
@@ -128,7 +129,7 @@ curl -X GET http://localhost:8000/
         "proxy_requests": 1,
         "queue_requests": 2,
         "queued": 2,
-        "uptime": 346154
+        "uptime": 84643
     },
     "status":"ok"
 }
@@ -137,6 +138,7 @@ curl -X GET http://localhost:8000/
 The debug array contains the same information displayed for POSTs. The data array includes some new information:
 
 * `priority` was auto-assigned to 10, as no value was manually assigned when the data was POSTed
+* `sha256` was auto-assigned to a SHA256 hash of the contents string ("one")
 * `uuid` was auto-assigned to a random version 4 UUID, uniquely identifying this specific contents
 
 A higher priority object can be added to the queue by including the `priority` parameter:
@@ -147,12 +149,12 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
     "code": 202,
     "debug": {
         "in_queue": 2,
-        "process_time": 2,
+        "process_time": 0,
         "proxied": 1,
         "proxy_requests": 1,
         "queue_requests": 3,
         "queued": 3,
-        "uptime": 1044214
+        "uptime": 179334
     },
     "status": "accepted"
 }
@@ -168,6 +170,7 @@ curl -X GET http://localhost:8000/
         "contents": "three",
         "elapsed": 283838,
         "priority": 50,
+        "sha256": "8b5b9db0c13db24256c829aa364aa90c6d2eba318b9232a4ab9313b954d3555f",
         "uuid": "0b58a347-87e7-4488-92e1-6993968270aa"
     },
     "debug": {
@@ -177,7 +180,7 @@ curl -X GET http://localhost:8000/
         "proxy_requests": 2,
         "queue_requests": 3,
         "queued": 3,
-        "uptime": 1328051
+        "uptime": 209457
     },
     "status":"ok"
 }
@@ -189,6 +192,7 @@ curl -X GET http://localhost:8000/
         "contents": "two",
         "elapsed": 1063087,
         "priority": 10,
+        "sha256": "3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3",
         "uuid": "33c6a5dc-af05-4524-9c0d-0209c592b709"
     },
     "debug": {
@@ -198,7 +202,7 @@ curl -X GET http://localhost:8000/
         "proxy_requests": 3,
         "queue_requests": 3,
         "queued": 3,
-        "uptime": 1330207
+        "uptime": 248672
     },
     "status":"ok"
 }
@@ -214,6 +218,9 @@ curl -X GET http://localhost:8000/
     "status": "error"
 }
 ```
+
+Initially based on the Rocket JSON example:
+<https://github.com/SergioBenitez/Rocket/tree/v0.4/examples/json>
 
 ## TODO
 

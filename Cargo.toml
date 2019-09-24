@@ -12,3 +12,4 @@ serde_derive = "^1.0"
 priority-queue = "^0.6"
 rocket_contrib = { default-features = false, features=["json"], version = "^0.4" }
 uuid = { features = ["serde", "v4"], version = "^0.7" }
+sha2 = "^0.8"
