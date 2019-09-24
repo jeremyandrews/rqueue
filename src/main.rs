@@ -122,7 +122,7 @@ fn new(
         },
         _ => {
             let sha256_received = message.0.sha256.unwrap();
-            if sha256 != sha256_received {
+            if sha256 != sha256_received.to_lowercase() {
                 return QueueApiResponse {
                     json: json!({
                             "status": "invalid sha256",
