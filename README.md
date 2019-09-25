@@ -73,7 +73,9 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
         "proxied": 0,
         "proxy_requests": 0,
         "queue_requests": 1,
+        "queue_size": "163 bytes",
         "queued": 1,
+        "request_size": "163 bytes"
         "uptime": 13587
     },
     "status": "accepted"
@@ -87,7 +89,9 @@ The contents of the debug array will only be visible when the daemon is running 
 * `proxied` indicates how many items have been added to then read from the queue
 * `proxy_requests` indicates how many times a request has been made to retreive something from the queue
 * `queue_requests` indicates how many times a request has been made to store something in the queue
+* `queue_size` indicates how much data is in the queue
 * `queued` indicates how many times an item has been successfully stored in the queue
+* `request_size` indicates how much data it took to store this request
 * `uptime` indicates how many milliseconds the rqueue daemon has been running
 
 Now, we can add another object:
@@ -102,7 +106,9 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
         "proxied": 0,
         "proxy_requests": 0,
         "queue_requests": 2,
+        "queue_size": "326 bytes",
         "queued": 2,
+        "request_size": "163 bytes"
         "uptime": 46589
     },
     "status": "accepted"
@@ -128,6 +134,7 @@ curl -X GET http://localhost:8000/
         "proxied": 1,
         "proxy_requests": 1,
         "queue_requests": 2,
+        "queue_size": "163 bytes",
         "queued": 2,
         "uptime": 84643
     },
@@ -153,7 +160,9 @@ curl -X POST http://localhost:8000/ -H 'Content-type: application/json' --data '
         "proxied": 1,
         "proxy_requests": 1,
         "queue_requests": 3,
+        "queue_size": "328 bytes",
         "queued": 3,
+        "request_size": "165 bytes",
         "uptime": 179334
     },
     "status": "accepted"
@@ -179,6 +188,7 @@ curl -X GET http://localhost:8000/
         "proxied": 2,
         "proxy_requests": 2,
         "queue_requests": 3,
+        "queue_size": "163 bytes",
         "queued": 3,
         "uptime": 209457
     },
@@ -201,6 +211,7 @@ curl -X GET http://localhost:8000/
         "proxied": 3,
         "proxy_requests": 3,
         "queue_requests": 3,
+        "queue_size": "0 bytes",
         "queued": 3,
         "uptime": 248672
     },

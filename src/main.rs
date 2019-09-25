@@ -20,9 +20,14 @@ use rocket_contrib::json::{Json, JsonValue};
 use priority_queue::PriorityQueue;
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
+use size::Size;
+
+// By default limit queue size to ~64 MiB
+const DEFAULT_MAXIMUM_QUEUE_SIZE: usize = 1024 * 1024 * 64;
 
 type Priority = u8;
 type Timestamp = u128;
+type SizeInBytes = AtomicUsize;
 // This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]
 struct MessageIn {
@@ -33,6 +38,7 @@ struct MessageIn {
 // This defines the format of the message we track internally.
 #[derive(PartialEq, Eq, Hash)]
 struct MessageInternal {
+    size_in_bytes: usize,
     contents: String,
     sha256: String,
     priority: Priority,
@@ -49,6 +55,7 @@ struct Counters {
     queued: AtomicUsize,
     proxied: AtomicUsize,
     in_queue: AtomicUsize,
+    bytes: AtomicUsize,
 }
 
 #[derive(Clone, Debug)]
@@ -125,9 +132,12 @@ fn new(
             if sha256 != sha256_received.to_lowercase() {
                 return QueueApiResponse {
                     json: json!({
-                            "status": "invalid sha256",
+                            "status": "bad request",
+                            "reason": "invalid sha256",
                             "code": 400,
                             "debug": {
+                                "uptime": milliseconds_since_timestamp(server_started.0),
+                                "process_time": milliseconds_since_timestamp(request_started.0),
                                 "expected_sha256": sha256,
                                 "received_sha256": sha256_received,
                             },
@@ -150,19 +160,45 @@ fn new(
     }
     // Internal state, the queue 
     let internal = MessageInternal {
+        // Size required is the size of this struct, plus the capacity of both contained strings
+        size_in_bytes: std::mem::size_of::<MessageInternal>() + message.0.contents.capacity() + sha256.capacity(),
         contents: message.0.contents,
         sha256: sha256,
         priority: priority,
         arrived: time_since_epoch().as_millis(),
         uuid: Uuid::new_v4(),
     };
+    let bytes_allocated_for_queue = counters.bytes.load(Ordering::Relaxed);
+    if (bytes_allocated_for_queue + internal.size_in_bytes) > DEFAULT_MAXIMUM_QUEUE_SIZE {
+        eprintln!("queue is holding {} bytes of data, unable to store additional {} bytes", bytes_allocated_for_queue, internal.size_in_bytes);
+        return QueueApiResponse {
+            json: json!({
+                    "status": "service unavailable",
+                    "reason": "insufficient memory",
+                    "code": 503,
+                    "debug": {
+                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "process_time": milliseconds_since_timestamp(request_started.0),
+                        "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
+                        "request_size": format!("{}", Size::Bytes(internal.size_in_bytes)),
+                        "max_bytes": format!("{}", Size::Bytes(DEFAULT_MAXIMUM_QUEUE_SIZE)),
+                    },
+                }),
+            status: Status::ServiceUnavailable,
+        };
+    }
+
+    // Clone this so we can increment bytes_allocated_for_queue
+    let size_of_request = internal.size_in_bytes.clone();
 
     // Grab lock and add message to queue
     let mut messagequeue = queue.lock().expect("queue lock.");
     messagequeue.push(internal, priority);
+
     // A message has been sucessfully added to the queue.
     let queued = counters.queued.fetch_add(1, Ordering::Relaxed) + 1;
     let in_queue = counters.in_queue.fetch_add(1, Ordering::Relaxed) + 1;
+    let bytes_allocated_for_queue = counters.bytes.fetch_add(size_of_request, Ordering::Relaxed) + size_of_request;
     // Retreive other debug statistics
     let proxy_requests = counters.proxy_requests.load(Ordering::Relaxed);
     let proxied = counters.proxied.load(Ordering::Relaxed);
@@ -178,6 +214,8 @@ fn new(
                     "in_queue": in_queue,
                     "uptime": milliseconds_since_timestamp(server_started.0),
                     "process_time": milliseconds_since_timestamp(request_started.0),
+                    "request_size": format!("{}", Size::Bytes(size_of_request)),
+                    "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
                 },
             }),
         status: Status::Accepted,
@@ -200,6 +238,7 @@ fn get(
         // A message has been sucessfully removed from the queue.
         let proxied = counters.proxied.fetch_add(1, Ordering::Relaxed) + 1;
         let in_queue = counters.in_queue.fetch_sub(1, Ordering::Relaxed) - 1;
+        let bytes_allocated_for_queue = counters.bytes.fetch_sub(internal.0.size_in_bytes, Ordering::Relaxed) - internal.0.size_in_bytes;
         // Retreive other debug statistics
         let queue_requests = counters.queue_requests.load(Ordering::Relaxed);
         let queued = counters.queued.load(Ordering::Relaxed);
@@ -225,6 +264,7 @@ fn get(
                         "in_queue": in_queue,
                         "uptime": milliseconds_since_timestamp(server_started.0),
                         "process_time": milliseconds_since_timestamp(request_started.0),
+                        "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
                     },
                 }),
             status: Status::Ok,
