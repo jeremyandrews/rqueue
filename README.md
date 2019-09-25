@@ -41,6 +41,40 @@ Resulting in the following structure:
 }
 ```
 
+## Configuration
+
+All configuration is done through `Rocket.toml`, as documented here:
+    https://rocket.rs/v0.4/guide/configuration/
+
+Currently the only configuration specific to RQueue is to control the maximum size of
+the queue in memory. By default it will be limited to 64 MiB, but an alternative limit
+can be configured by defining `queue_memory_limit_in_bytes` in `Rocket.toml`. This limit
+can be configured per-environment, or in the global section.
+
+For example, to set the limit to 256 MiB in all environments:
+
+```toml
+[global]
+queue_memory_limit_in_bytes = 268435456
+```
+
+Or, to set the limit to 8 MiB in development and 1 GiB in production (and it will default to 64 MiB in staging):
+
+```toml
+[development]
+queue_memory_limit_in_bytes = 8388608
+
+[production]
+queue_memory_limit_in_bytes = 1073741824
+```
+
+Whatever value you set will be visible in Rocket's logs, for example:
+
+```bash
+    => [extra] queue_memory_limit_in_bytes: 1073741824
+    => Queue memory limit: 1.00 GiB
+```
+
 ## Notes
 
 Rocket requires the nightly version of Rust:
@@ -241,5 +275,3 @@ Initially based on the Rocket JSON example:
 * Implement disk-backing for items in queue over configurable amount of time
 * Add configuration for enabling/disabling debug output
 * Add configurable logging
-* Add configuration to cap memory usage (and track memory usage)
-* Add configuration to cap storage usage (and track storage useage) for disk-backing

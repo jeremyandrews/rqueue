@@ -60,6 +60,8 @@ struct Counters {
 
 #[derive(Clone, Debug)]
 struct Started(Duration);
+#[derive(Clone, Debug)]
+struct QueueMemoryLimit(usize);
 
 // Set an HTTP status when responding with JSON objects
 #[derive(Debug)]
@@ -113,6 +115,7 @@ fn new(
         counters: State<Counters>,
         server_started: State<Started>,
         request_started: Started,
+        queue_memory_limit: State<QueueMemoryLimit>,
     ) -> QueueApiResponse {
     // A POST was routed here, requesting to add something to the queue.
     let queue_requests = counters.queue_requests.fetch_add(1, Ordering::Relaxed) + 1;
@@ -169,7 +172,7 @@ fn new(
         uuid: Uuid::new_v4(),
     };
     let bytes_allocated_for_queue = counters.bytes.load(Ordering::Relaxed);
-    if (bytes_allocated_for_queue + internal.size_in_bytes) > DEFAULT_MAXIMUM_QUEUE_SIZE {
+    if (bytes_allocated_for_queue + internal.size_in_bytes) > queue_memory_limit.0 {
         eprintln!("queue is holding {} bytes of data, unable to store additional {} bytes", bytes_allocated_for_queue, internal.size_in_bytes);
         return QueueApiResponse {
             json: json!({
@@ -181,7 +184,7 @@ fn new(
                         "process_time": milliseconds_since_timestamp(request_started.0),
                         "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
                         "request_size": format!("{}", Size::Bytes(internal.size_in_bytes)),
-                        "max_bytes": format!("{}", Size::Bytes(DEFAULT_MAXIMUM_QUEUE_SIZE)),
+                        "max_bytes": format!("{}", Size::Bytes(queue_memory_limit.0)),
                     },
                 }),
             status: Status::ServiceUnavailable,
@@ -286,13 +289,24 @@ fn not_found() -> QueueApiResponse {
 
 fn rocket() -> rocket::Rocket {
     rocket::ignite()
-        .register(catchers![not_found])
-        .manage(Counters::default())
-        .manage(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()))
         .manage(Started(time_since_epoch()))
+        .attach(AdHoc::on_attach("Memory Limit Config", |rocket| {
+            let memory_limit_config = rocket.config()
+                .get_int("queue_memory_limit_in_bytes");
+            
+            let queue_memory_limit = match memory_limit_config {
+                Ok(n) => n as usize,
+                Err(_) => DEFAULT_MAXIMUM_QUEUE_SIZE,
+            };
+            eprintln!("    => Queue memory limit: {}", Size::Bytes(queue_memory_limit));
+            Ok(rocket.manage(QueueMemoryLimit(queue_memory_limit)))
+        }))
         .attach(AdHoc::on_request("Time Request", |req, _| {
             req.local_cache(|| Started(time_since_epoch()));
         }))
+        .manage(Counters::default())
+        .manage(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()))
+        .register(catchers![not_found])
         .mount("/", routes![new, get])
 }
 

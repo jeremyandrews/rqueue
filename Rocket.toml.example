@@ -1,0 +1,3 @@
+[development]
+# set a smaller 8 MB memory limit in development
+queue_memory_limit_in_bytes = 8388608
