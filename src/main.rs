@@ -124,6 +124,11 @@ fn new(
     let mut hasher = Sha256::new();
     hasher.input(message.0.contents.as_bytes());
     let sha256 = format!("{:x}", hasher.result());
+    log::debug!("{}|generated sha256{} for message '{}'",
+        milliseconds_since_timestamp(server_started.0),
+        sha256,
+        message.0.contents,
+    );
 
     // If a Sha256 was provided, validate it
     match message.0.sha256 {
@@ -133,6 +138,11 @@ fn new(
         _ => {
             let sha256_received = message.0.sha256.unwrap();
             if sha256 != sha256_received.to_lowercase() {
+                log::info!("{}|invalid sha256 {} received, expected {}, ignoring message",
+                    milliseconds_since_timestamp(server_started.0),
+                    sha256_received,
+                    sha256_received
+                );
                 return QueueApiResponse {
                     json: json!({
                             "status": "bad request",
@@ -156,9 +166,17 @@ fn new(
     match message.0.priority {
         None => {
             priority = 10;
+            log::debug!("{}|automatically set priority to {}",
+                milliseconds_since_timestamp(server_started.0),
+                priority,
+            );
         }
         _ => {
             priority = message.0.priority.unwrap();
+            log::debug!("{}|manually set priority to {}",
+                milliseconds_since_timestamp(server_started.0),
+                priority,
+            );
         }
     }
     // Internal state, the queue 
@@ -173,7 +191,12 @@ fn new(
     };
     let bytes_allocated_for_queue = counters.bytes.load(Ordering::Relaxed);
     if (bytes_allocated_for_queue + internal.size_in_bytes) > queue_memory_limit.0 {
-        eprintln!("queue is holding {} bytes of data, unable to store additional {} bytes", bytes_allocated_for_queue, internal.size_in_bytes);
+        log::warn!("{}|queue is holding {}, limit of {}, unable to store additional {}",
+            milliseconds_since_timestamp(server_started.0),
+            Size::Bytes(bytes_allocated_for_queue),
+            Size::Bytes(queue_memory_limit.0),
+            Size::Bytes(internal.size_in_bytes)
+        );
         return QueueApiResponse {
             json: json!({
                     "status": "service unavailable",
@@ -205,6 +228,20 @@ fn new(
     // Retreive other debug statistics
     let proxy_requests = counters.proxy_requests.load(Ordering::Relaxed);
     let proxied = counters.proxied.load(Ordering::Relaxed);
+
+    log::info!("{}|message of {} with priority of {} queued, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
+        milliseconds_since_timestamp(server_started.0),
+        Size::Bytes(size_of_request),
+        priority,
+        queue_requests,
+        queued,
+        proxy_requests,
+        proxied,
+        in_queue,
+        Size::Bytes(bytes_allocated_for_queue),
+        milliseconds_since_timestamp(request_started.0),
+    );
+
     QueueApiResponse {
         json: json!({
                 "status": "accepted",
@@ -246,6 +283,19 @@ fn get(
         let queue_requests = counters.queue_requests.load(Ordering::Relaxed);
         let queued = counters.queued.load(Ordering::Relaxed);
 
+        log::info!("{}|message of {} with priority of {} proxied, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
+            milliseconds_since_timestamp(server_started.0),
+            Size::Bytes(internal.0.size_in_bytes),
+            internal.0.priority,
+            queue_requests,
+            queued,
+            proxy_requests,
+            proxied,
+            in_queue,
+            Size::Bytes(bytes_allocated_for_queue),
+            milliseconds_since_timestamp(request_started.0),
+        );
+
         // Message queue returns a tuple, the internal data strucutre and the priority.
         // Use this to build the JSON response on-the-fly.
         QueueApiResponse {
@@ -253,8 +303,8 @@ fn get(
                     "status": "ok",
                     "code": 200,
                     "data": {
-                        "contents": internal.0.contents.clone(),
-                        "sha256": internal.0.sha256.clone(),
+                        "contents": internal.0.contents,
+                        "sha256": internal.0.sha256,
                         "priority": internal.0.priority,
                         "elapsed": (time_since_epoch().as_millis() - internal.0.arrived) as usize,
                         "uuid": internal.0.uuid,
@@ -298,7 +348,7 @@ fn rocket() -> rocket::Rocket {
                 Ok(n) => n as usize,
                 Err(_) => DEFAULT_MAXIMUM_QUEUE_SIZE,
             };
-            eprintln!("    => Queue memory limit: {}", Size::Bytes(queue_memory_limit));
+            log::info!("Queue memory limit: {}", Size::Bytes(queue_memory_limit));
             Ok(rocket.manage(QueueMemoryLimit(queue_memory_limit)))
         }))
         .attach(AdHoc::on_request("Time Request", |req, _| {

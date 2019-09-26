@@ -274,4 +274,3 @@ Initially based on the Rocket JSON example:
 * Implement method for pushing queued data via HTTP/S
 * Implement disk-backing for items in queue over configurable amount of time
 * Add configuration for enabling/disabling debug output
-* Add configurable logging
