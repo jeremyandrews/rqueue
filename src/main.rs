@@ -22,18 +22,21 @@ use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use size::Size;
 
-// By default limit queue size to ~64 MiB
-const DEFAULT_MAXIMUM_QUEUE_SIZE: usize = 1024 * 1024 * 64;
-
 type Priority = u8;
 type Timestamp = u128;
 type SizeInBytes = AtomicUsize;
+
+// By default limit queue size to ~64 MiB
+const DEFAULT_MAXIMUM_QUEUE_SIZE: usize = 1024 * 1024 * 64;
+// Default priority to 10 if not otherwise set
+const DEFAULT_PRIORITY: u8 = 10;
+
 // This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]
 struct MessageIn {
     contents: String,
     sha256: Option<String>,
-    priority: Option<Priority>,
+    priority: Option<i32>,
 }
 // This defines the format of the message we track internally.
 #[derive(PartialEq, Eq, Hash)]
@@ -165,18 +168,61 @@ fn new(
     let priority: Priority;
     match message.0.priority {
         None => {
-            priority = 10;
+            priority = DEFAULT_PRIORITY;
             log::debug!("{}|automatically set priority to {}",
                 milliseconds_since_timestamp(server_started.0),
                 priority,
             );
         }
         _ => {
-            priority = message.0.priority.unwrap();
-            log::debug!("{}|manually set priority to {}",
-                milliseconds_since_timestamp(server_started.0),
-                priority,
-            );
+            let temporary_priority: i32 = message.0.priority.unwrap();
+            if temporary_priority < u8::min_value() as i32 {
+                log::info!("{}|received invalid negative priority of {}",
+                    milliseconds_since_timestamp(server_started.0),
+                    temporary_priority,
+                );
+                return QueueApiResponse {
+                    json: json!({
+                            "status": "bad request",
+                            "reason": "invalid priority",
+                            "code": 400,
+                            "debug": {
+                                "uptime": milliseconds_since_timestamp(server_started.0),
+                                "process_time": milliseconds_since_timestamp(request_started.0),
+                                "minimum_priority": Priority::min_value(),
+                                "received_priority": temporary_priority,
+                            },
+                        }),
+                    status: Status::BadRequest,
+                };
+            }
+            else if temporary_priority > u8::max_value() as i32 {
+                log::info!("{}|received invalid priority of {}",
+                    milliseconds_since_timestamp(server_started.0),
+                    temporary_priority,
+                );
+                return QueueApiResponse {
+                    json: json!({
+                            "status": "bad request",
+                            "reason": "invalid priority",
+                            "code": 400,
+                            "debug": {
+                                "uptime": milliseconds_since_timestamp(server_started.0),
+                                "process_time": milliseconds_since_timestamp(request_started.0),
+                                "maximum_priority": Priority::max_value(),
+                                "received_priority": temporary_priority,
+                            },
+                        }),
+                    status: Status::BadRequest,
+                };
+            }
+            else {
+                priority = temporary_priority as u8;
+                log::debug!("{}|manually set priority to {}",
+                    milliseconds_since_timestamp(server_started.0),
+                    priority,
+                );
+            }
         }
     }
     // Internal state, the queue 

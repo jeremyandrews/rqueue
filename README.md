@@ -269,7 +269,6 @@ Initially based on the Rocket JSON example:
 
 ## TODO
 
-* Provide better error handling for invalid priority
 * Optionally require configurable JWT authentication to post to queue
 * Implement method for pushing queued data via HTTP/S
 * Implement disk-backing for items in queue over configurable amount of time
