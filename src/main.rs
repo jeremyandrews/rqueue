@@ -141,7 +141,7 @@ fn new(
                 log::info!("{}|invalid sha256 {} received, expected {}, ignoring message",
                     milliseconds_since_timestamp(server_started.0),
                     sha256_received,
-                    sha256_received
+                    sha256,
                 );
                 return QueueApiResponse {
                     json: json!({
@@ -283,6 +283,11 @@ fn get(
         let queue_requests = counters.queue_requests.load(Ordering::Relaxed);
         let queued = counters.queued.load(Ordering::Relaxed);
 
+        log::debug!("{}|message from queue with sha256 {}: '{}'",
+            milliseconds_since_timestamp(server_started.0),
+            internal.0.sha256,
+            internal.0.contents,
+        );
         log::info!("{}|message of {} with priority of {} proxied, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
             milliseconds_since_timestamp(server_started.0),
             Size::Bytes(internal.0.size_in_bytes),
