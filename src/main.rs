@@ -3,12 +3,14 @@
 #[macro_use] extern crate rocket;
 #[macro_use] extern crate rocket_contrib;
 #[macro_use] extern crate serde_derive;
+#[macro_use] extern crate lazy_static;
 
 #[cfg(test)] mod tests;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 use std::time::{SystemTime, Duration};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use rocket::{State, Request, response};
 use rocket::fairing::AdHoc;
@@ -21,6 +23,8 @@ use priority_queue::PriorityQueue;
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use size::Size;
+
+mod proxy;
 
 type Priority = u8;
 type Timestamp = u128;
@@ -48,7 +52,6 @@ struct MessageInternal {
     arrived: Timestamp,
     uuid: Uuid,
 }
-type MessageQueue = Mutex<PriorityQueue<MessageInternal, Priority>>;
 
 // Global counters:
 #[derive(Default)]
@@ -62,7 +65,7 @@ struct Counters {
 }
 
 #[derive(Clone, Debug)]
-struct Started(Duration);
+pub struct RequestTimer(Duration);
 #[derive(Clone, Debug)]
 struct QueueMemoryLimit(usize);
 
@@ -83,13 +86,19 @@ impl<'r> response::Responder<'r> for QueueApiResponse {
     }
 }
 
-impl<'a, 'r> FromRequest<'a, 'r> for Started {
+impl<'a, 'r> FromRequest<'a, 'r> for RequestTimer {
     type Error = std::convert::Infallible;
 
     fn from_request(request: &'a Request<'r>) -> request::Outcome<Self, Self::Error> {
-        let request_started: &Started = request.local_cache(|| Started(Duration::from_secs(0)));
+        let request_started: &RequestTimer = request.local_cache(|| RequestTimer(Duration::from_secs(0)));
         Outcome::Success(request_started.clone())
     }
+}
+
+lazy_static! {
+    static ref QUEUE: Arc<Mutex<PriorityQueue<MessageInternal, Priority>>> = Arc::new(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()));
+    static ref STARTED: Arc<Mutex<Duration>> = Arc::new(Mutex::new(time_since_epoch()));
+    static ref COUNTERS: Arc<Mutex<Counters>> = Arc::new(Mutex::new(Counters::default()));
 }
 
 // Helper function for getting time since the epoch in milliseconds.
@@ -114,12 +123,11 @@ fn milliseconds_since_timestamp(timestamp: Duration) -> usize {
 #[post("/", format="json", data="<message>")]
 fn new(
         message: Json<MessageIn>,
-        queue: State<'_, MessageQueue>,
-        counters: State<Counters>,
-        server_started: State<Started>,
-        request_started: Started,
+        request_started: RequestTimer,
         queue_memory_limit: State<QueueMemoryLimit>,
     ) -> QueueApiResponse {
+    let server_started = STARTED.lock().unwrap();
+    let counters = COUNTERS.lock().unwrap();
     // A POST was routed here, requesting to add something to the queue.
     let queue_requests = counters.queue_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -128,7 +136,7 @@ fn new(
     hasher.input(message.0.contents.as_bytes());
     let sha256 = format!("{:x}", hasher.result());
     log::debug!("{}|generated sha256{} for message '{}'",
-        milliseconds_since_timestamp(server_started.0),
+        milliseconds_since_timestamp(*server_started),
         sha256,
         message.0.contents,
     );
@@ -142,7 +150,7 @@ fn new(
             let sha256_received = message.0.sha256.unwrap();
             if sha256 != sha256_received.to_lowercase() {
                 log::info!("{}|invalid sha256 {} received, expected {}, ignoring message",
-                    milliseconds_since_timestamp(server_started.0),
+                    milliseconds_since_timestamp(*server_started),
                     sha256_received,
                     sha256,
                 );
@@ -152,7 +160,7 @@ fn new(
                             "reason": "invalid sha256",
                             "code": 400,
                             "debug": {
-                                "uptime": milliseconds_since_timestamp(server_started.0),
+                                "uptime": milliseconds_since_timestamp(*server_started),
                                 "process_time": milliseconds_since_timestamp(request_started.0),
                                 "expected_sha256": sha256,
                                 "received_sha256": sha256_received,
@@ -170,7 +178,7 @@ fn new(
         None => {
             priority = DEFAULT_PRIORITY;
             log::debug!("{}|automatically set priority to {}",
-                milliseconds_since_timestamp(server_started.0),
+                milliseconds_since_timestamp(*server_started),
                 priority,
             );
         }
@@ -178,7 +186,7 @@ fn new(
             let temporary_priority: i32 = message.0.priority.unwrap();
             if temporary_priority < u8::min_value() as i32 {
                 log::info!("{}|received invalid negative priority of {}",
-                    milliseconds_since_timestamp(server_started.0),
+                    milliseconds_since_timestamp(*server_started),
                     temporary_priority,
                 );
                 return QueueApiResponse {
@@ -187,7 +195,7 @@ fn new(
                             "reason": "invalid priority",
                             "code": 400,
                             "debug": {
-                                "uptime": milliseconds_since_timestamp(server_started.0),
+                                "uptime": milliseconds_since_timestamp(*server_started),
                                 "process_time": milliseconds_since_timestamp(request_started.0),
                                 "minimum_priority": Priority::min_value(),
                                 "received_priority": temporary_priority,
@@ -198,7 +206,7 @@ fn new(
             }
             else if temporary_priority > u8::max_value() as i32 {
                 log::info!("{}|received invalid priority of {}",
-                    milliseconds_since_timestamp(server_started.0),
+                    milliseconds_since_timestamp(*server_started),
                     temporary_priority,
                 );
                 return QueueApiResponse {
@@ -207,7 +215,7 @@ fn new(
                             "reason": "invalid priority",
                             "code": 400,
                             "debug": {
-                                "uptime": milliseconds_since_timestamp(server_started.0),
+                                "uptime": milliseconds_since_timestamp(*server_started),
                                 "process_time": milliseconds_since_timestamp(request_started.0),
                                 "maximum_priority": Priority::max_value(),
                                 "received_priority": temporary_priority,
@@ -219,7 +227,7 @@ fn new(
             else {
                 priority = temporary_priority as u8;
                 log::debug!("{}|manually set priority to {}",
-                    milliseconds_since_timestamp(server_started.0),
+                    milliseconds_since_timestamp(*server_started),
                     priority,
                 );
             }
@@ -238,7 +246,7 @@ fn new(
     let bytes_allocated_for_queue = counters.bytes.load(Ordering::Relaxed);
     if (bytes_allocated_for_queue + internal.size_in_bytes) > queue_memory_limit.0 {
         log::warn!("{}|queue is holding {}, limit of {}, unable to store additional {}",
-            milliseconds_since_timestamp(server_started.0),
+            milliseconds_since_timestamp(*server_started),
             Size::Bytes(bytes_allocated_for_queue),
             Size::Bytes(queue_memory_limit.0),
             Size::Bytes(internal.size_in_bytes)
@@ -249,7 +257,7 @@ fn new(
                     "reason": "insufficient memory",
                     "code": 503,
                     "debug": {
-                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "uptime": milliseconds_since_timestamp(*server_started),
                         "process_time": milliseconds_since_timestamp(request_started.0),
                         "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
                         "request_size": format!("{}", Size::Bytes(internal.size_in_bytes)),
@@ -264,8 +272,8 @@ fn new(
     let size_of_request = internal.size_in_bytes.clone();
 
     // Grab lock and add message to queue
-    let mut messagequeue = queue.lock().expect("queue lock.");
-    messagequeue.push(internal, priority);
+    let mut queue = QUEUE.lock().expect("queue lock");
+    queue.push(internal, priority);
 
     // A message has been sucessfully added to the queue.
     let queued = counters.queued.fetch_add(1, Ordering::Relaxed) + 1;
@@ -275,8 +283,8 @@ fn new(
     let proxy_requests = counters.proxy_requests.load(Ordering::Relaxed);
     let proxied = counters.proxied.load(Ordering::Relaxed);
 
-    log::info!("{}|message of {} with priority of {} queued, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
-        milliseconds_since_timestamp(server_started.0),
+    log::info!("{}|{} message with priority of {} queued, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
+        milliseconds_since_timestamp(*server_started),
         Size::Bytes(size_of_request),
         priority,
         queue_requests,
@@ -298,7 +306,7 @@ fn new(
                     "queued": queued,
                     "proxied": proxied,
                     "in_queue": in_queue,
-                    "uptime": milliseconds_since_timestamp(server_started.0),
+                    "uptime": milliseconds_since_timestamp(*server_started),
                     "process_time": milliseconds_since_timestamp(request_started.0),
                     "request_size": format!("{}", Size::Bytes(size_of_request)),
                     "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
@@ -311,16 +319,15 @@ fn new(
 // Temporary: ultimately the proxy will push this data.
 #[get("/", format = "json")]
 fn get(
-        queue: State<'_, MessageQueue>,
-        counters: State<Counters>,
-        server_started: State<Started>,
-        request_started: Started,
+        request_started: RequestTimer,
     ) -> Option<QueueApiResponse> {
+    let server_started = STARTED.lock().unwrap();
+    let counters = COUNTERS.lock().unwrap();
     // A GET was routed here, requesting to get something from the queue.
     let proxy_requests = counters.proxy_requests.fetch_add(1, Ordering::Relaxed) + 1;
 
-    let mut messagequeue = queue.lock().unwrap();
-    messagequeue.pop().map(|internal| {
+    let mut queue = QUEUE.lock().expect("queue lock");
+    queue.pop().map(|internal| {
         // A message has been sucessfully removed from the queue.
         let proxied = counters.proxied.fetch_add(1, Ordering::Relaxed) + 1;
         let in_queue = counters.in_queue.fetch_sub(1, Ordering::Relaxed) - 1;
@@ -330,12 +337,12 @@ fn get(
         let queued = counters.queued.load(Ordering::Relaxed);
 
         log::debug!("{}|message from queue with sha256 {}: '{}'",
-            milliseconds_since_timestamp(server_started.0),
+            milliseconds_since_timestamp(*server_started),
             internal.0.sha256,
             internal.0.contents,
         );
-        log::info!("{}|message of {} with priority of {} proxied, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
-            milliseconds_since_timestamp(server_started.0),
+        log::info!("{}|{} message with priority of {} proxied, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
+            milliseconds_since_timestamp(*server_started),
             Size::Bytes(internal.0.size_in_bytes),
             internal.0.priority,
             queue_requests,
@@ -366,7 +373,7 @@ fn get(
                         "queued": queued,
                         "proxied": proxied,
                         "in_queue": in_queue,
-                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "uptime": milliseconds_since_timestamp(*server_started),
                         "process_time": milliseconds_since_timestamp(request_started.0),
                         "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
                     },
@@ -390,7 +397,6 @@ fn not_found() -> QueueApiResponse {
 
 fn rocket() -> rocket::Rocket {
     rocket::ignite()
-        .manage(Started(time_since_epoch()))
         .attach(AdHoc::on_attach("Memory Limit Config", |rocket| {
             let memory_limit_config = rocket.config()
                 .get_int("queue_memory_limit_in_bytes");
@@ -403,14 +409,17 @@ fn rocket() -> rocket::Rocket {
             Ok(rocket.manage(QueueMemoryLimit(queue_memory_limit)))
         }))
         .attach(AdHoc::on_request("Time Request", |req, _| {
-            req.local_cache(|| Started(time_since_epoch()));
+            req.local_cache(|| RequestTimer(time_since_epoch()));
         }))
-        .manage(Counters::default())
-        .manage(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()))
         .register(catchers![not_found])
         .mount("/", routes![new, get])
 }
 
 fn main() {
+    // Proxy thread reads queue and pushes notifications upstream.
+    let _handle = thread::spawn(|| {
+        proxy::proxy_loop();
+    });
+    // REST server collects notifications in the queue.
     rocket().launch();
 }
