@@ -11,6 +11,7 @@ use std::sync::{Mutex, Arc};
 use std::time::{SystemTime, Duration};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::process;
 
 use rocket::{State, Request, response};
 use rocket::fairing::AdHoc;
@@ -430,7 +431,7 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
                         n as usize
                     }
                     else {
-                        5
+                        DEFAULT_PROXY_DELAY
                     }
                 }
                 Err(_) => DEFAULT_PROXY_DELAY,
@@ -441,7 +442,10 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
                 .get_str("notification_server");
             proxy_config.server = match proxy_notification_server {
                 Ok(n) => n.to_string(),
-                Err(_) => "None".to_string(),
+                Err(_) => {
+                    log::error!("Fatal error: 'notification_server' was not found in Rocket.toml.");
+                    process::exit(1);
+                }
             };
             log::info!("Notification server: {}", proxy_config.server);
 
