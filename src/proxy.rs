@@ -1,53 +1,104 @@
 use std::thread;
 use std::time::Duration;
 use std::sync::atomic::Ordering;
+use serde_json::json;
 
-use crate::{STARTED, QUEUE, COUNTERS, milliseconds_since_timestamp};
+use crate::{STARTED_1, QUEUE, COUNTERS, PROXY_CONFIG, DEFAULT_PROXY_DELAY, milliseconds_since_timestamp, MessageInternal};
 
-use size::Size;
+use size::{Base, Size, Style};
 
 
 pub fn proxy_loop() {
-    let mut sleep_time = 1;
+    let mut sleep_time = DEFAULT_PROXY_DELAY;
     loop {
-        thread::sleep(Duration::from_secs(sleep_time));
-        let server_started = STARTED.lock().unwrap();
-        let counters = COUNTERS.lock().unwrap();
-        log::debug!("{}|top of proxy loop", milliseconds_since_timestamp(*server_started));
+        thread::sleep(Duration::from_secs(sleep_time as u64));
 
-        let mut queue = QUEUE.lock().expect("queue lock");
-        let contents = queue.pop().map(|internal| {
-            // @TODO: Actually push the request upstream -- if this fails, return the item
-            // to the queue.
-            sleep_time = 0;
-            // A message has been sucessfully removed from the queue.
-            let proxied = counters.proxied.fetch_add(1, Ordering::Relaxed) + 1;
-            let in_queue = counters.in_queue.fetch_sub(1, Ordering::Relaxed) - 1;
-            let bytes_allocated_for_queue = counters.bytes.fetch_sub(internal.0.size_in_bytes, Ordering::Relaxed) - internal.0.size_in_bytes;
-            // Retreive other debug statistics
-            let queue_requests = counters.queue_requests.load(Ordering::Relaxed);
-            let queued = counters.queued.load(Ordering::Relaxed);
+        let queue_contents;
+        // We preserve a copy of the message in case there's an error, as then we'll
+        // return it to the queue.
+        let mut message: MessageInternal = MessageInternal::default();
+        {
+            let server_started = STARTED_1.lock().unwrap();
+            let mut queue = QUEUE.lock().expect("queue lock");
 
+            log::debug!("{}|top of proxy loop", milliseconds_since_timestamp(*server_started));
+
+            queue_contents = queue.pop().map(|internal| {
+                message.size_in_bytes = internal.0.size_in_bytes;
+                message.contents = internal.0.contents.clone();
+                message.sha256 = internal.0.sha256.clone();
+                message.priority = internal.0.priority;
+                message.arrived = internal.0.arrived;
+                message.uuid = internal.0.uuid.clone();
+
+            });
+        }
+
+        let response;
+        if queue_contents != None {
+            {
+                let client = reqwest::Client::new();
+                let message_json = json!({
+                    "contents": &message.contents.clone(),
+                    "priority": message.priority.clone(),
+                    "sha256": &message.sha256.clone(),
+                    "uuid": &message.uuid.clone(),
+                    // DEBUG
+                });
+                // @TODO: configuration
+                response = client.post("http://10.10.10.13:8000/")
+                    .json(&message_json)
+                    .send();
+            }
+
+            let server_started = STARTED_1.lock().unwrap();
+            let counters = COUNTERS.lock().unwrap();
             log::debug!("{}|message from queue with sha256 {}: '{}'",
                 milliseconds_since_timestamp(*server_started),
-                internal.0.sha256,
-                internal.0.contents,
+                &message.sha256,
+                &message.contents,
             );
-            log::info!("{}|{} message with priority of {} proxied, {} queue_requests, {} queued, {} proxied, {} in {} queue",
-                milliseconds_since_timestamp(*server_started),
-                Size::Bytes(internal.0.size_in_bytes),
-                internal.0.priority,
-                queue_requests,
-                queued,
-                proxied,
-                in_queue,
-                Size::Bytes(bytes_allocated_for_queue),
-            );
-        });
-        // If the queue is empty, sleep longer.
-        if contents == None {
-            sleep_time = 1;
+
+            match response {
+                Ok(_) => {
+                    // A message has been sucessfully removed from the queue.
+                    let proxied = counters.proxied.fetch_add(1, Ordering::Relaxed) + 1;
+                    let in_queue = counters.in_queue.fetch_sub(1, Ordering::Relaxed) - 1;
+                    let bytes_allocated_for_queue = counters.bytes.fetch_sub(message.size_in_bytes, Ordering::Relaxed) - message.size_in_bytes;
+                    // Retreive other debug statistics
+                    let queue_requests = counters.queue_requests.load(Ordering::Relaxed);
+                    let queued = counters.queued.load(Ordering::Relaxed);
+
+                    log::info!("{}|{} message with priority of {} proxied, {} queue_requests, {} queued, {} proxied, {} in {} queue",
+                        milliseconds_since_timestamp(*server_started),
+                        Size::Bytes(message.size_in_bytes).to_string(Base::Base10, Style::Abbreviated),
+                        message.priority,
+                        queue_requests,
+                        queued,
+                        proxied,
+                        in_queue,
+                        Size::Bytes(bytes_allocated_for_queue).to_string(Base::Base10, Style::Abbreviated),
+                    );
+                }
+                Err(e) => {
+                    log::warn!("{}|proxy failure: {}",
+                        milliseconds_since_timestamp(*server_started),
+                        e
+                    );
+                    let mut queue = QUEUE.lock().expect("queue lock");
+                    let priority = message.priority;
+                    queue.push(message, priority);
+                }
+            }
+            sleep_time = 0;
         }
+        else {
+            // If the queue is empty, sleep longer.
+            let proxy_config = PROXY_CONFIG.lock().unwrap();
+            sleep_time = proxy_config.delay;
+
+        }
+        let server_started = STARTED_1.lock().unwrap();
         log::debug!("{}|bottom of proxy loop", milliseconds_since_timestamp(*server_started));
     }
 }

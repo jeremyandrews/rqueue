@@ -22,7 +22,7 @@ use rocket_contrib::json::{Json, JsonValue};
 use priority_queue::PriorityQueue;
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
-use size::Size;
+use size::{Base, Size, Style};
 
 mod proxy;
 
@@ -34,6 +34,8 @@ type SizeInBytes = AtomicUsize;
 const DEFAULT_MAXIMUM_QUEUE_SIZE: usize = 1024 * 1024 * 64;
 // Default priority to 10 if not otherwise set
 const DEFAULT_PRIORITY: u8 = 10;
+// By default wait 5 seconds after checking an empty queue
+const DEFAULT_PROXY_DELAY: usize = 5;
 
 // This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]
@@ -43,7 +45,7 @@ struct MessageIn {
     priority: Option<i32>,
 }
 // This defines the format of the message we track internally.
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default)]
 struct MessageInternal {
     size_in_bytes: usize,
     contents: String,
@@ -62,6 +64,13 @@ struct Counters {
     proxied: AtomicUsize,
     in_queue: AtomicUsize,
     bytes: AtomicUsize,
+}
+
+// Proxy configuration:
+#[derive(Default)]
+struct ProxyConfig {
+    delay: usize,
+    server: String,
 }
 
 #[derive(Clone, Debug)]
@@ -96,9 +105,10 @@ impl<'a, 'r> FromRequest<'a, 'r> for RequestTimer {
 }
 
 lazy_static! {
-    static ref QUEUE: Arc<Mutex<PriorityQueue<MessageInternal, Priority>>> = Arc::new(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()));
-    static ref STARTED: Arc<Mutex<Duration>> = Arc::new(Mutex::new(time_since_epoch()));
+    static ref STARTED_1: Arc<Mutex<Duration>> = Arc::new(Mutex::new(time_since_epoch()));
     static ref COUNTERS: Arc<Mutex<Counters>> = Arc::new(Mutex::new(Counters::default()));
+    static ref QUEUE: Arc<Mutex<PriorityQueue<MessageInternal, Priority>>> = Arc::new(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()));
+    static ref PROXY_CONFIG: Arc<Mutex<ProxyConfig>> = Arc::new(Mutex::new(ProxyConfig::default()));
 }
 
 // Helper function for getting time since the epoch in milliseconds.
@@ -126,7 +136,7 @@ fn new(
         request_started: RequestTimer,
         queue_memory_limit: State<QueueMemoryLimit>,
     ) -> QueueApiResponse {
-    let server_started = STARTED.lock().unwrap();
+    let server_started = STARTED_1.lock().unwrap();
     let counters = COUNTERS.lock().unwrap();
     // A POST was routed here, requesting to add something to the queue.
     let queue_requests = counters.queue_requests.fetch_add(1, Ordering::Relaxed) + 1;
@@ -285,14 +295,14 @@ fn new(
 
     log::info!("{}|{} message with priority of {} queued, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
         milliseconds_since_timestamp(*server_started),
-        Size::Bytes(size_of_request),
+        Size::Bytes(size_of_request).to_string(Base::Base10, Style::Abbreviated),
         priority,
         queue_requests,
         queued,
         proxy_requests,
         proxied,
         in_queue,
-        Size::Bytes(bytes_allocated_for_queue),
+        Size::Bytes(bytes_allocated_for_queue).to_string(Base::Base10, Style::Abbreviated),
         milliseconds_since_timestamp(request_started.0),
     );
 
@@ -321,7 +331,7 @@ fn new(
 fn get(
         request_started: RequestTimer,
     ) -> Option<QueueApiResponse> {
-    let server_started = STARTED.lock().unwrap();
+    let server_started = STARTED_1.lock().unwrap();
     let counters = COUNTERS.lock().unwrap();
     // A GET was routed here, requesting to get something from the queue.
     let proxy_requests = counters.proxy_requests.fetch_add(1, Ordering::Relaxed) + 1;
@@ -343,14 +353,14 @@ fn get(
         );
         log::info!("{}|{} message with priority of {} proxied, {} queue_requests, {} queued, {} proxy requests, {} proxied, {} in {} queue, request took {} ms",
             milliseconds_since_timestamp(*server_started),
-            Size::Bytes(internal.0.size_in_bytes),
+            Size::Bytes(internal.0.size_in_bytes).to_string(Base::Base10, Style::Abbreviated),
             internal.0.priority,
             queue_requests,
             queued,
             proxy_requests,
             proxied,
             in_queue,
-            Size::Bytes(bytes_allocated_for_queue),
+            Size::Bytes(bytes_allocated_for_queue).to_string(Base::Base10, Style::Abbreviated),
             milliseconds_since_timestamp(request_started.0),
         );
 
@@ -397,7 +407,7 @@ fn not_found() -> QueueApiResponse {
 
 fn rocket() -> rocket::Rocket {
     rocket::ignite()
-        .attach(AdHoc::on_attach("Memory Limit Config", |rocket| {
+        .attach(AdHoc::on_attach("Custom Configuration", |rocket| {
             let memory_limit_config = rocket.config()
                 .get_int("queue_memory_limit_in_bytes");
             
@@ -406,6 +416,32 @@ fn rocket() -> rocket::Rocket {
                 Err(_) => DEFAULT_MAXIMUM_QUEUE_SIZE,
             };
             log::info!("Queue memory limit: {}", Size::Bytes(queue_memory_limit));
+
+            let mut proxy_config = PROXY_CONFIG.lock().unwrap();
+
+            let proxy_delay_config = rocket.config()
+                .get_int("proxy_delay");
+            proxy_config.delay = match proxy_delay_config {
+                Ok(n) => {
+                    if n > 0 {
+                        n as usize
+                    }
+                    else {
+                        5
+                    }
+                }
+                Err(_) => DEFAULT_PROXY_DELAY,
+            };
+            log::info!("Proxy delay: {} s", proxy_config.delay);
+
+            let proxy_notification_server = rocket.config()
+                .get_str("notification_server");
+            proxy_config.server = match proxy_notification_server {
+                Ok(n) => n.to_string(),
+                Err(_) => "None".to_string(),
+            };
+            log::info!("Notification server: {}", proxy_config.server);
+
             Ok(rocket.manage(QueueMemoryLimit(queue_memory_limit)))
         }))
         .attach(AdHoc::on_request("Time Request", |req, _| {
@@ -417,7 +453,7 @@ fn rocket() -> rocket::Rocket {
 
 fn main() {
     // Proxy thread reads queue and pushes notifications upstream.
-    let _handle = thread::spawn(|| {
+    thread::spawn(|| {
         proxy::proxy_loop();
     });
     // REST server collects notifications in the queue.
