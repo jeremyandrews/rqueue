@@ -3,12 +3,12 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 use serde_json::json;
 
-use crate::{STARTED_1, QUEUE, COUNTERS, PROXY_CONFIG, DEFAULT_PROXY_DELAY, milliseconds_since_timestamp, MessageInternal};
+use crate::{COUNTERS, QUEUE, PROXY_CONFIG, DEFAULT_PROXY_DELAY, milliseconds_since_timestamp, MessageInternal};
 
 use size::{Base, Size, Style};
 
 
-pub fn proxy_loop() {
+pub fn proxy_loop(server_started: Duration) {
     let mut sleep_time = DEFAULT_PROXY_DELAY;
     loop {
         thread::sleep(Duration::from_secs(sleep_time as u64));
@@ -18,10 +18,11 @@ pub fn proxy_loop() {
         // return it to the queue.
         let mut message: MessageInternal = MessageInternal::default();
         {
-            let server_started = STARTED_1.lock().unwrap();
+            // We don't use counters here, but we have to grab locks in order to prevent a race
+            let _counters = COUNTERS.lock().unwrap();
             let mut queue = QUEUE.lock().expect("queue lock");
 
-            log::debug!("{}|top of proxy loop", milliseconds_since_timestamp(*server_started));
+            log::debug!("{}|top of proxy loop", milliseconds_since_timestamp(server_started));
 
             queue_contents = queue.pop().map(|internal| {
                 message.size_in_bytes = internal.0.size_in_bytes;
@@ -51,16 +52,15 @@ pub fn proxy_loop() {
                     .send();
             }
 
-            let server_started = STARTED_1.lock().unwrap();
-            let counters = COUNTERS.lock().unwrap();
             log::debug!("{}|message from queue with sha256 {}: '{}'",
-                milliseconds_since_timestamp(*server_started),
+                milliseconds_since_timestamp(server_started),
                 &message.sha256,
                 &message.contents,
             );
 
             match response {
                 Ok(_) => {
+                    let counters = COUNTERS.lock().unwrap();
                     // A message has been sucessfully removed from the queue.
                     let proxied = counters.proxied.fetch_add(1, Ordering::Relaxed) + 1;
                     let in_queue = counters.in_queue.fetch_sub(1, Ordering::Relaxed) - 1;
@@ -70,7 +70,7 @@ pub fn proxy_loop() {
                     let queued = counters.queued.load(Ordering::Relaxed);
 
                     log::info!("{}|{} message with priority of {} proxied, {} queue_requests, {} queued, {} proxied, {} in {} queue",
-                        milliseconds_since_timestamp(*server_started),
+                        milliseconds_since_timestamp(server_started),
                         Size::Bytes(message.size_in_bytes).to_string(Base::Base10, Style::Abbreviated),
                         message.priority,
                         queue_requests,
@@ -82,11 +82,13 @@ pub fn proxy_loop() {
                 }
                 Err(e) => {
                     log::warn!("{}|proxy failure: {}",
-                        milliseconds_since_timestamp(*server_started),
+                        milliseconds_since_timestamp(server_started),
                         e
                     );
-                    let mut queue = QUEUE.lock().expect("queue lock");
                     let priority = message.priority;
+                    // We don't need counters here, but we have to grab locks in order to avoid a race
+                    let _counters = COUNTERS.lock().unwrap();
+                    let mut queue = QUEUE.lock().expect("queue lock");
                     queue.push(message, priority);
                 }
             }
@@ -98,7 +100,6 @@ pub fn proxy_loop() {
             sleep_time = proxy_config.delay;
 
         }
-        let server_started = STARTED_1.lock().unwrap();
-        log::debug!("{}|bottom of proxy loop", milliseconds_since_timestamp(*server_started));
+        log::debug!("{}|bottom of proxy loop", milliseconds_since_timestamp(server_started));
     }
 }
