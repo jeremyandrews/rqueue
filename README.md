@@ -16,14 +16,14 @@ For example:
 cargo build
 ```
 
-### rqueue-notifications
+### rqueue-notify
 
 When enabled, rqueue operates as a prioritized notification server.
 
 For example:
 
 ```bash
-cargo build --no-default-features --features rqueue-notifications
+cargo build --no-default-features --features rqueue-notify
 ```
 
 ### rqueue-debug

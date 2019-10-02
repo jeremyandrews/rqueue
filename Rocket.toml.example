@@ -8,6 +8,15 @@ proxy_delay = 15
 # If enabled, the shared secret is applied as salt when calculating the sha256
 #shared_secret = ""
 
+# All of the following must be configured to send email
+#mail_from_address = "notify@example.com"
+#mail_from_name = "Notify Daemon"
+#mail_to_address = "user@example.com"
+#mail_to_name = "Foo Bar"
+#smtp_server = "smtp.example.com"
+#smtp_user = "username"
+#smtp_password = "password"
+
 [development]
 # set a smaller 8 MB memory limit in development
 queue_memory_limit_in_bytes = 8388608

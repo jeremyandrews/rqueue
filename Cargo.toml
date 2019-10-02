@@ -7,7 +7,7 @@ edition = "2018"
 [features]
 default = ["rqueue-proxy"]
 rqueue-proxy = []
-rqueue-notifications = []
+rqueue-notify = ["lettre", "lettre_email"]
 rqueue-debug = []
 
 [dependencies]
@@ -23,3 +23,5 @@ size = "^0.1"
 log = "^0.4"
 lazy_static = "^1.4.0"
 reqwest = "^0.9"
+lettre = { optional = true, version = "^0.9" }
+lettre_email = { optional = true, version = "^0.9" }

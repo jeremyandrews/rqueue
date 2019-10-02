@@ -3,14 +3,15 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 use serde_json::json;
 
-use crate::{COUNTERS, QUEUE, PROXY_CONFIG, DEFAULT_PROXY_DELAY, milliseconds_since_timestamp, MessageInternal};
+use crate::{COUNTERS, QUEUE, PROXY_CONFIG, DEFAULT_DELAY, milliseconds_since_timestamp, MessageInternal};
 
 use size::{Base, Size, Style};
 
 
 pub fn proxy_loop(server_started: Duration) {
-    let mut sleep_time = DEFAULT_PROXY_DELAY;
+    let mut sleep_time = DEFAULT_DELAY;
     loop {
+        log::debug!("{}|top of proxy loop", milliseconds_since_timestamp(server_started));
         thread::sleep(Duration::from_secs(sleep_time as u64));
 
         let queue_contents;
@@ -22,9 +23,6 @@ pub fn proxy_loop(server_started: Duration) {
             // We don't use counters here, but we have to grab locks in order to prevent a race
             let _counters = COUNTERS.lock().unwrap();
             let mut queue = QUEUE.lock().expect("queue lock");
-
-            log::debug!("{}|top of proxy loop", milliseconds_since_timestamp(server_started));
-
             queue_contents = queue.pop().map(|internal| {
                 message.size_in_bytes = internal.0.size_in_bytes;
                 message.contents = internal.0.contents.clone();
@@ -49,16 +47,16 @@ pub fn proxy_loop(server_started: Duration) {
                 // DEBUG
             });
 
-            let client = reqwest::Client::new();
-            response = client.post(&server)
-                .json(&message_json)
-                .send();
-
             log::debug!("{}|message from queue with sha256 {}: '{}'",
                 milliseconds_since_timestamp(server_started),
                 &message.sha256,
                 &message.contents,
             );
+
+            let client = reqwest::Client::new();
+            response = client.post(&server)
+                .json(&message_json)
+                .send();
 
             match response {
                 Ok(_) => {
@@ -84,7 +82,7 @@ pub fn proxy_loop(server_started: Duration) {
                     );
                 }
                 Err(e) => {
-                    sleep_time = DEFAULT_PROXY_DELAY;
+                    sleep_time = DEFAULT_DELAY;
                     if e.is_server_error() {
                         log::warn!("{}|proxy failure {} to '{}', upstream server error: {}",
                             milliseconds_since_timestamp(server_started),
@@ -141,7 +139,6 @@ pub fn proxy_loop(server_started: Duration) {
             // If the queue is empty, sleep longer.
             let proxy_config = PROXY_CONFIG.lock().unwrap();
             sleep_time = proxy_config.delay;
-
         }
         log::debug!("{}|bottom of proxy loop", milliseconds_since_timestamp(server_started));
     }

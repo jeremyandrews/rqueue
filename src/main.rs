@@ -26,6 +26,7 @@ use sha2::{Sha256, Digest};
 use size::{Base, Size, Style};
 
 mod proxy;
+mod notify;
 
 type Priority = u8;
 type Timestamp = u128;
@@ -36,7 +37,7 @@ const DEFAULT_MAXIMUM_QUEUE_SIZE: usize = 1024 * 1024 * 64;
 // Default priority to 10 if not otherwise set
 const DEFAULT_PRIORITY: u8 = 10;
 // By default wait 5 seconds after checking an empty queue
-const DEFAULT_PROXY_DELAY: usize = 5;
+const DEFAULT_DELAY: usize = 5;
 
 // This defines the format of the message we receive.
 #[derive(Serialize, Deserialize)]
@@ -76,12 +77,23 @@ struct QueueConfig {
     require_sha256: bool,
     shared_secret: String,
 }
-
 // Proxy configuration:
 #[derive(Default)]
 struct ProxyConfig {
     delay: usize,
     server: String,
+}
+// Notify configuration:
+#[derive(Default)]
+struct NotifyConfig {
+    delay: usize,
+    mail_from_name: String,
+    mail_from_address: String,
+    mail_to_name: String,
+    mail_to_address: String,
+    smtp_server: String,
+    smtp_user: String,
+    smtp_password: String,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +131,7 @@ lazy_static! {
     static ref COUNTERS: Arc<Mutex<Counters>> = Arc::new(Mutex::new(Counters::default()));
     static ref QUEUE: Arc<Mutex<PriorityQueue<MessageInternal, Priority>>> = Arc::new(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()));
     static ref PROXY_CONFIG: Arc<Mutex<ProxyConfig>> = Arc::new(Mutex::new(ProxyConfig::default()));
+    static ref NOTIFY_CONFIG: Arc<Mutex<NotifyConfig>> = Arc::new(Mutex::new(NotifyConfig::default()));
 }
 
 // Helper function for getting time since the epoch in milliseconds.
@@ -518,10 +531,10 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
                             n as usize
                         }
                         else {
-                            DEFAULT_PROXY_DELAY
+                            DEFAULT_DELAY
                         }
                     }
-                    Err(_) => DEFAULT_PROXY_DELAY,
+                    Err(_) => DEFAULT_DELAY,
                 };
                 log::info!("Proxy delay: {} s", proxy_config.delay);
                 proxy_config.server = match rocket.config().get_str("notification_server") {
@@ -532,6 +545,57 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
                     }
                 };
                 log::info!("Notification server: {}", proxy_config.server);
+            }
+
+            if cfg!(feature = "rqueue-notify") {
+                let mut notify_config = NOTIFY_CONFIG.lock().unwrap();
+                notify_config.delay = match rocket.config().get_int("notify_delay") {
+                    Ok(n) => {
+                        if n > 0 {
+                            n as usize
+                        }
+                        else {
+                            DEFAULT_DELAY
+                        }
+                    }
+                    Err(_) => DEFAULT_DELAY,
+                };
+                log::info!("Notify delay: {}", notify_config.delay);
+                notify_config.mail_from_name = match rocket.config().get_string("mail_from_name") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("Mail from name: {}", notify_config.mail_from_name);
+                notify_config.mail_from_address = match rocket.config().get_string("mail_from_address") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("Mail from address: {}", notify_config.mail_from_address);
+                notify_config.mail_to_name = match rocket.config().get_string("mail_to_name") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("Mail to name: {}", notify_config.mail_to_name);
+                notify_config.mail_to_address = match rocket.config().get_string("mail_to_address") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("Mail to address: {}", notify_config.mail_to_address);
+                notify_config.smtp_server = match rocket.config().get_string("smtp_server") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("SMTP server: {}", notify_config.smtp_server);
+                notify_config.smtp_user = match rocket.config().get_string("smtp_user") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("SMTP user: {}", notify_config.smtp_user);
+                notify_config.smtp_password = match rocket.config().get_string("smtp_password") {
+                    Ok(n) => n.to_string(),
+                    Err(_) => "".to_string(),
+                };
+                log::info!("SMTP password: {}", notify_config.smtp_password);
             }
 
             Ok(rocket.manage(queue_config))
@@ -552,6 +616,15 @@ fn main() {
             // Make a copy for the proxy thread
             let proxy_started = server_started;
             proxy::proxy_loop(proxy_started);
+        });
+    }
+
+    if cfg!(feature = "rqueue-notify") {
+        // Notify thread reads queue and generates notifications.
+        thread::spawn(move || {
+            // Make a copy for the proxy thread
+            //let notify_started = server_started;
+            notify::notify_loop(server_started.clone());
         });
     }
 
