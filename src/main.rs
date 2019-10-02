@@ -25,7 +25,6 @@ use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use size::{Base, Size, Style};
 
-#[cfg(feature="rqueue-proxy")]
 mod proxy;
 
 type Priority = u8;
@@ -468,33 +467,34 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
             };
             log::info!("Queue memory limit: {}", Size::Bytes(queue_memory_limit));
 
-            let mut proxy_config = PROXY_CONFIG.lock().unwrap();
-
-            let proxy_delay_config = rocket.config()
-                .get_int("proxy_delay");
-            proxy_config.delay = match proxy_delay_config {
-                Ok(n) => {
-                    if n > 0 {
-                        n as usize
+            if cfg!(feature = "rqueue-proxy") {
+                let mut proxy_config = PROXY_CONFIG.lock().unwrap();
+                let proxy_delay_config = rocket.config()
+                    .get_int("proxy_delay");
+                proxy_config.delay = match proxy_delay_config {
+                    Ok(n) => {
+                        if n > 0 {
+                            n as usize
+                        }
+                        else {
+                            DEFAULT_PROXY_DELAY
+                        }
                     }
-                    else {
-                        DEFAULT_PROXY_DELAY
-                    }
-                }
-                Err(_) => DEFAULT_PROXY_DELAY,
-            };
-            log::info!("Proxy delay: {} s", proxy_config.delay);
+                    Err(_) => DEFAULT_PROXY_DELAY,
+                };
+                log::info!("Proxy delay: {} s", proxy_config.delay);
 
-            let proxy_notification_server = rocket.config()
-                .get_str("notification_server");
-            proxy_config.server = match proxy_notification_server {
-                Ok(n) => n.to_string(),
-                Err(_) => {
-                    log::error!("Fatal error: 'notification_server' was not found in Rocket.toml.");
-                    process::exit(1);
-                }
-            };
-            log::info!("Notification server: {}", proxy_config.server);
+                let proxy_notification_server = rocket.config()
+                    .get_str("notification_server");
+                proxy_config.server = match proxy_notification_server {
+                    Ok(n) => n.to_string(),
+                    Err(_) => {
+                        log::error!("Fatal error: 'notification_server' was not found in Rocket.toml.");
+                        process::exit(1);
+                    }
+                };
+                log::info!("Notification server: {}", proxy_config.server);
+            }
 
             Ok(rocket.manage(QueueMemoryLimit(queue_memory_limit)))
         }))

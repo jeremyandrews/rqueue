@@ -10,9 +10,21 @@ If not otherwise specified, notifications have a priority of 10. Higher priority
 
 When enabled, rqueue operates as a prioritized proxying queue for notifications.
 
+For example:
+
+```bash
+cargo build
+```
+
 ### rqueue-notifications
 
 When enabled, rqueue operates as a prioritized notification server.
+
+For example:
+
+```bash
+cargo build --no-default-features --features rqueue-notifications
+```
 
 ### rqueue-debug
 
@@ -21,7 +33,7 @@ When enabled, rqueue displays additional debug information through the REST endp
 For example:
 
 ```bash
-cargo run --features rqueue-debug
+cargo build --features rqueue-debug
 ```
 
 ## Structure
