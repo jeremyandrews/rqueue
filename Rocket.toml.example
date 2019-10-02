@@ -3,6 +3,10 @@
 notification_server = "http://10.10.10.13:8000/"
 # How many seconds to wait before rechecking empty queue for messages
 proxy_delay = 15
+# If enabled, the sha256 field must be set for all received messages
+#require_sha256 = false
+# If enabled, the shared secret is applied as salt when calculating the sha256
+#shared_secret = ""
 
 [development]
 # set a smaller 8 MB memory limit in development

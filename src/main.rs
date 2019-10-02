@@ -69,6 +69,14 @@ struct Counters {
     bytes: AtomicUsize,
 }
 
+// Queue configuration:
+#[derive(Default)]
+struct QueueConfig {
+    memory_limit: usize,
+    require_sha256: bool,
+    shared_secret: String,
+}
+
 // Proxy configuration:
 #[derive(Default)]
 struct ProxyConfig {
@@ -76,13 +84,10 @@ struct ProxyConfig {
     server: String,
 }
 
-
 #[derive(Clone, Debug)]
 struct Started(Duration);
 #[derive(Clone, Debug)]
 pub struct RequestTimer(Duration);
-#[derive(Clone, Debug)]
-struct QueueMemoryLimit(usize);
 
 // Set an HTTP status when responding with JSON objects
 #[derive(Debug)]
@@ -140,7 +145,7 @@ fn new(
         message: Json<MessageIn>,
         server_started: State<Started>,
         request_started: RequestTimer,
-        queue_memory_limit: State<QueueMemoryLimit>,
+        queue_config: State<QueueConfig>,
     ) -> QueueApiResponse {
     let counters = COUNTERS.lock().unwrap();
     // A POST was routed here, requesting to add something to the queue.
@@ -149,6 +154,9 @@ fn new(
     // Generate a Sha256 of the message contents.
     let mut hasher = Sha256::new();
     hasher.input(message.0.contents.as_bytes());
+    if queue_config.shared_secret != "" {
+        hasher.input(queue_config.shared_secret.as_bytes());
+    }
     let sha256 = format!("{:x}", hasher.result());
     log::debug!("{}|generated sha256{} for message '{}'",
         milliseconds_since_timestamp(server_started.0),
@@ -159,7 +167,32 @@ fn new(
     // If a Sha256 was provided, validate it
     match message.0.sha256 {
         None => {
-            // The Sha256 is not required.
+            if queue_config.require_sha256 {
+                log::warn!("{}|sha256 required but not set, expected {}, ignoring message",
+                    milliseconds_since_timestamp(server_started.0),
+                    sha256,
+                );
+                let debug;
+                if cfg!(feature = "rqueue-debug") {
+                    debug = json!({
+                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "process_time": milliseconds_since_timestamp(request_started.0),
+                        "expected_sha256": sha256,
+                    })
+                }
+                else {
+                    debug = json!({})
+                }
+                return QueueApiResponse {
+                    json: json!({
+                            "status": "bad request",
+                            "reason": "required sha256 not set",
+                            "code": 400,
+                            "debug": debug,
+                        }),
+                    status: Status::BadRequest,
+                };
+            }
         },
         _ => {
             let sha256_received = message.0.sha256.unwrap();
@@ -282,11 +315,11 @@ fn new(
         original_priority: priority,
     };
     let bytes_allocated_for_queue = counters.bytes.load(Ordering::Relaxed);
-    if (bytes_allocated_for_queue + internal.size_in_bytes) > queue_memory_limit.0 {
+    if (bytes_allocated_for_queue + internal.size_in_bytes) > queue_config.memory_limit {
         log::warn!("{}|queue is holding {}, limit of {}, unable to store additional {}",
             milliseconds_since_timestamp(server_started.0),
             Size::Bytes(bytes_allocated_for_queue),
-            Size::Bytes(queue_memory_limit.0),
+            Size::Bytes(queue_config.memory_limit),
             Size::Bytes(internal.size_in_bytes)
         );
         let debug;
@@ -296,7 +329,7 @@ fn new(
                 "process_time": milliseconds_since_timestamp(request_started.0),
                 "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
                 "request_size": format!("{}", Size::Bytes(internal.size_in_bytes)),
-                "max_bytes": format!("{}", Size::Bytes(queue_memory_limit.0)),
+                "max_bytes": format!("{}", Size::Bytes(queue_config.memory_limit)),
             })
         }
         else {
@@ -458,20 +491,28 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
     rocket::ignite()
         .manage(Started(server_started))
         .attach(AdHoc::on_attach("Custom Configuration", |rocket| {
-            let memory_limit_config = rocket.config()
-                .get_int("queue_memory_limit_in_bytes");
-            
-            let queue_memory_limit = match memory_limit_config {
+            let mut queue_config: QueueConfig = QueueConfig::default();
+            queue_config.memory_limit = match rocket.config().get_int("queue_memory_limit_in_bytes") {
                 Ok(n) => n as usize,
                 Err(_) => DEFAULT_MAXIMUM_QUEUE_SIZE,
             };
-            log::info!("Queue memory limit: {}", Size::Bytes(queue_memory_limit));
+            log::info!("Queue memory limit: {}", Size::Bytes(queue_config.memory_limit));
+
+            queue_config.require_sha256 = match rocket.config().get_bool("require_sha256") {
+                Ok(n) => n,
+                Err(_) => false,
+            };
+            log::info!("Require sha256: {}", queue_config.require_sha256);
+
+            queue_config.shared_secret = match rocket.config().get_str("shared_secret") {
+                Ok(n) => n.to_string(),
+                Err(_) => "".to_string(),
+            };
+            log::info!("Shared secret: {}", queue_config.shared_secret);
 
             if cfg!(feature = "rqueue-proxy") {
                 let mut proxy_config = PROXY_CONFIG.lock().unwrap();
-                let proxy_delay_config = rocket.config()
-                    .get_int("proxy_delay");
-                proxy_config.delay = match proxy_delay_config {
+                proxy_config.delay = match rocket.config().get_int("proxy_delay") {
                     Ok(n) => {
                         if n > 0 {
                             n as usize
@@ -483,10 +524,7 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
                     Err(_) => DEFAULT_PROXY_DELAY,
                 };
                 log::info!("Proxy delay: {} s", proxy_config.delay);
-
-                let proxy_notification_server = rocket.config()
-                    .get_str("notification_server");
-                proxy_config.server = match proxy_notification_server {
+                proxy_config.server = match rocket.config().get_str("notification_server") {
                     Ok(n) => n.to_string(),
                     Err(_) => {
                         log::error!("Fatal error: 'notification_server' was not found in Rocket.toml.");
@@ -496,7 +534,7 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
                 log::info!("Notification server: {}", proxy_config.server);
             }
 
-            Ok(rocket.manage(QueueMemoryLimit(queue_memory_limit)))
+            Ok(rocket.manage(queue_config))
         }))
         .attach(AdHoc::on_request("Time Request", |req, _| {
             req.local_cache(|| RequestTimer(time_since_epoch()));
