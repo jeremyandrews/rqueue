@@ -32,7 +32,8 @@ pub fn proxy_loop(server_started: Duration) {
                 message.priority = internal.0.priority;
                 message.arrived = internal.0.arrived;
                 message.uuid = internal.0.uuid.clone();
-
+                message.original_priority = internal.0.original_priority;
+                message.delivery_attempts = internal.0.delivery_attempts + 1;
             });
             let proxy_config = PROXY_CONFIG.lock().unwrap();
             server = proxy_config.server.clone();
@@ -85,15 +86,17 @@ pub fn proxy_loop(server_started: Duration) {
                 Err(e) => {
                     sleep_time = DEFAULT_PROXY_DELAY;
                     if e.is_server_error() {
-                        log::warn!("{}|proxy failure to '{}', upstream server error: {}",
+                        log::warn!("{}|proxy failure {} to '{}', upstream server error: {}",
                             milliseconds_since_timestamp(server_started),
+                            &message.delivery_attempts,
                             &server,
                             e
                         );
                     }
                     else if e.is_client_error() {
-                        log::warn!("{}|proxy failure to '{}', local configuration error: {}",
+                        log::warn!("{}|proxy failure {} to '{}', local configuration error: {}",
                             milliseconds_since_timestamp(server_started),
+                            &message.delivery_attempts,
                             &server,
                             e
                         );
@@ -101,15 +104,17 @@ pub fn proxy_loop(server_started: Duration) {
                     else if e.is_http() {
                         match e.url() {
                             None => {
-                                log::warn!("{}|proxy failure to '{}', no url configured [{}]",
+                                log::warn!("{}|proxy failure {} to '{}', no url configured [{}]",
                                     milliseconds_since_timestamp(server_started),
+                                    &message.delivery_attempts,
                                     &server,
                                     e
                                 );
                             }
                             Some(url) => {
-                                log::warn!("{}|proxy failure to '{}', invalid url configured [{}]",
+                                log::warn!("{}|proxy failure {} to '{}', invalid url configured [{}]",
                                     milliseconds_since_timestamp(server_started),
+                                    &message.delivery_attempts,
                                     &server,
                                     url
                                 );
@@ -117,8 +122,9 @@ pub fn proxy_loop(server_started: Duration) {
                         }
                     }
                     else {
-                        log::warn!("{}|proxy failure to '{}', unexpected error [{}]",
+                        log::warn!("{}|proxy failure {} to '{}', unexpected error [{}]",
                             milliseconds_since_timestamp(server_started),
+                            &message.delivery_attempts,
                             &server,
                             e
                         );

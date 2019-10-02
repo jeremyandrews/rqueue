@@ -1,8 +1,28 @@
 # RQueue
 
-A prioritized notifications queing proxy.
+Prioritized proxy and notifications queue.
 
 If not otherwise specified, notifications have a priority of 10. Higher priority notifications will be delivered before lower priority notifications.
+
+## Features
+
+### rqueue-proxy (default)
+
+When enabled, rqueue operates as a prioritized proxying queue for notifications.
+
+### rqueue-notifications
+
+When enabled, rqueue operates as a prioritized notification server.
+
+### rqueue-debug
+
+When enabled, rqueue displays additional debug information through the REST endpoints.
+
+For example:
+
+```bash
+cargo run --features rqueue-debug
+```
 
 ## Structure
 
@@ -270,6 +290,4 @@ Initially based on the Rocket JSON example:
 ## TODO
 
 * Optionally require configurable JWT authentication to post to queue
-* Implement method for pushing queued data via HTTP/S
 * Implement disk-backing for items in queue over configurable amount of time
-* Add configuration for enabling/disabling debug output

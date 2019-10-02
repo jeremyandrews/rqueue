@@ -25,6 +25,7 @@ use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use size::{Base, Size, Style};
 
+#[cfg(feature="rqueue-proxy")]
 mod proxy;
 
 type Priority = u8;
@@ -54,6 +55,8 @@ struct MessageInternal {
     priority: Priority,
     arrived: Timestamp,
     uuid: Uuid,
+    delivery_attempts: usize,
+    original_priority: Priority,
 }
 
 // Global counters:
@@ -167,17 +170,24 @@ fn new(
                     sha256_received,
                     sha256,
                 );
+                let debug;
+                if cfg!(feature = "rqueue-debug") {
+                    debug = json!({
+                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "process_time": milliseconds_since_timestamp(request_started.0),
+                        "expected_sha256": sha256,
+                        "received_sha256": sha256_received,
+                    })
+                }
+                else {
+                    debug = json!({})
+                }
                 return QueueApiResponse {
                     json: json!({
                             "status": "bad request",
                             "reason": "invalid sha256",
                             "code": 400,
-                            "debug": {
-                                "uptime": milliseconds_since_timestamp(server_started.0),
-                                "process_time": milliseconds_since_timestamp(request_started.0),
-                                "expected_sha256": sha256,
-                                "received_sha256": sha256_received,
-                            },
+                            "debug": debug,
                         }),
                     status: Status::BadRequest,
                 };
@@ -202,17 +212,24 @@ fn new(
                     milliseconds_since_timestamp(server_started.0),
                     temporary_priority,
                 );
+                let debug;
+                if cfg!(feature = "rqueue-debug") {
+                    debug = json!({
+                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "process_time": milliseconds_since_timestamp(request_started.0),
+                        "minimum_priority": Priority::min_value(),
+                        "received_priority": temporary_priority,
+                    })
+                }
+                else {
+                    debug = json!({})
+                }
                 return QueueApiResponse {
                     json: json!({
                             "status": "bad request",
                             "reason": "invalid priority",
                             "code": 400,
-                            "debug": {
-                                "uptime": milliseconds_since_timestamp(server_started.0),
-                                "process_time": milliseconds_since_timestamp(request_started.0),
-                                "minimum_priority": Priority::min_value(),
-                                "received_priority": temporary_priority,
-                            },
+                            "debug": debug,
                         }),
                     status: Status::BadRequest,
                 };
@@ -222,17 +239,24 @@ fn new(
                     milliseconds_since_timestamp(server_started.0),
                     temporary_priority,
                 );
+                let debug;
+                if cfg!(feature = "rqueue-debug") {
+                    debug = json!({
+                        "uptime": milliseconds_since_timestamp(server_started.0),
+                        "process_time": milliseconds_since_timestamp(request_started.0),
+                        "maximum_priority": Priority::max_value(),
+                        "received_priority": temporary_priority,
+                    })
+                }
+                else {
+                    debug = json!({})
+                }
                 return QueueApiResponse {
                     json: json!({
                             "status": "bad request",
                             "reason": "invalid priority",
                             "code": 400,
-                            "debug": {
-                                "uptime": milliseconds_since_timestamp(server_started.0),
-                                "process_time": milliseconds_since_timestamp(request_started.0),
-                                "maximum_priority": Priority::max_value(),
-                                "received_priority": temporary_priority,
-                            },
+                            "debug": debug,
                         }),
                     status: Status::BadRequest,
                 };
@@ -255,6 +279,8 @@ fn new(
         priority: priority,
         arrived: time_since_epoch().as_millis(),
         uuid: Uuid::new_v4(),
+        delivery_attempts: 0,
+        original_priority: priority,
     };
     let bytes_allocated_for_queue = counters.bytes.load(Ordering::Relaxed);
     if (bytes_allocated_for_queue + internal.size_in_bytes) > queue_memory_limit.0 {
@@ -264,18 +290,25 @@ fn new(
             Size::Bytes(queue_memory_limit.0),
             Size::Bytes(internal.size_in_bytes)
         );
+        let debug;
+        if cfg!(feature = "rqueue-debug") {
+            debug = json!({
+                "uptime": milliseconds_since_timestamp(server_started.0),
+                "process_time": milliseconds_since_timestamp(request_started.0),
+                "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
+                "request_size": format!("{}", Size::Bytes(internal.size_in_bytes)),
+                "max_bytes": format!("{}", Size::Bytes(queue_memory_limit.0)),
+            })
+        }
+        else {
+            debug = json!({})
+        }
         return QueueApiResponse {
             json: json!({
                     "status": "service unavailable",
                     "reason": "insufficient memory",
                     "code": 503,
-                    "debug": {
-                        "uptime": milliseconds_since_timestamp(server_started.0),
-                        "process_time": milliseconds_since_timestamp(request_started.0),
-                        "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
-                        "request_size": format!("{}", Size::Bytes(internal.size_in_bytes)),
-                        "max_bytes": format!("{}", Size::Bytes(queue_memory_limit.0)),
-                    },
+                    "debug": debug,
                 }),
             status: Status::ServiceUnavailable,
         };
@@ -309,21 +342,28 @@ fn new(
         milliseconds_since_timestamp(request_started.0),
     );
 
+    let debug;
+    if cfg!(feature = "rqueue-debug") {
+        debug = json!({
+            "queue_requests": queue_requests,
+            "proxy_requests": proxy_requests,
+            "queued": queued,
+            "proxied": proxied,
+            "in_queue": in_queue,
+            "uptime": milliseconds_since_timestamp(server_started.0),
+            "process_time": milliseconds_since_timestamp(request_started.0),
+            "request_size": format!("{}", Size::Bytes(size_of_request)),
+            "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
+        })
+    }
+    else {
+        debug = json!({})
+    }
     QueueApiResponse {
         json: json!({
                 "status": "accepted",
                 "code": 202,
-                "debug": {
-                    "queue_requests": queue_requests,
-                    "proxy_requests": proxy_requests,
-                    "queued": queued,
-                    "proxied": proxied,
-                    "in_queue": in_queue,
-                    "uptime": milliseconds_since_timestamp(server_started.0),
-                    "process_time": milliseconds_since_timestamp(request_started.0),
-                    "request_size": format!("{}", Size::Bytes(size_of_request)),
-                    "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
-                },
+                "debug": debug,
             }),
         status: Status::Accepted,
     }
@@ -368,6 +408,22 @@ fn get(
         );
 
         // Message queue returns a tuple, the internal data strucutre and the priority.
+        let debug;
+        if cfg!(feature = "rqueue-debug") {
+            debug = json!({
+                "queue_requests": queue_requests,
+                "proxy_requests": proxy_requests,
+                "queued": queued,
+                "proxied": proxied,
+                "in_queue": in_queue,
+                "uptime": milliseconds_since_timestamp(server_started.0),
+                "process_time": milliseconds_since_timestamp(request_started.0),
+                "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
+            })
+        }
+        else {
+            debug = json!({})
+        }
         // Use this to build the JSON response on-the-fly.
         QueueApiResponse {
             json: json!({
@@ -380,16 +436,7 @@ fn get(
                         "elapsed": (time_since_epoch().as_millis() - internal.0.arrived) as usize,
                         "uuid": internal.0.uuid,
                     },
-                    "debug": {
-                        "queue_requests": queue_requests,
-                        "proxy_requests": proxy_requests,
-                        "queued": queued,
-                        "proxied": proxied,
-                        "in_queue": in_queue,
-                        "uptime": milliseconds_since_timestamp(server_started.0),
-                        "process_time": milliseconds_since_timestamp(request_started.0),
-                        "queue_size": format!("{}", Size::Bytes(bytes_allocated_for_queue)),
-                    },
+                    "debug": debug,
                 }),
             status: Status::Ok,
         }
@@ -460,13 +507,16 @@ fn rocket(server_started: Duration) -> rocket::Rocket {
 
 fn main() {
     let server_started = time_since_epoch();
-    // Make a copy for the proxy thread
-    let proxy_started = server_started;
 
-    // Proxy thread reads queue and pushes notifications upstream.
-    thread::spawn(move || {
-        proxy::proxy_loop(proxy_started);
-    });
+    if cfg!(feature = "rqueue-proxy") {
+        // Proxy thread reads queue and pushes notifications upstream.
+        thread::spawn(move || {
+            // Make a copy for the proxy thread
+            let proxy_started = server_started;
+            proxy::proxy_loop(proxy_started);
+        });
+    }
+
     // REST server collects notifications in the queue.
     rocket(server_started).launch();
 }
