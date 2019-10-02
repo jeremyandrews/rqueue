@@ -6,6 +6,10 @@
 #[macro_use] extern crate lazy_static;
 
 #[cfg(test)] mod tests;
+//#[cfg(feature = "rqueue-proxy")] mod proxy;
+//#[cfg(feature = "rqueue-notify")] mod notify;
+mod proxy;
+mod notify;
 
 use std::sync::{Mutex, Arc};
 use std::time::{SystemTime, Duration};
@@ -24,9 +28,6 @@ use priority_queue::PriorityQueue;
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use size::{Base, Size, Style};
-
-mod proxy;
-mod notify;
 
 type Priority = u8;
 type Timestamp = u128;

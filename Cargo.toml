@@ -1,13 +1,13 @@
 [package]
 name = "rqueue"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Jeremy Andrews <jeremy@tag1consulting.com>"]
 edition = "2018"
 
 [features]
 default = ["rqueue-proxy"]
 rqueue-proxy = []
-rqueue-notify = ["lettre", "lettre_email"]
+rqueue-notify = []
 rqueue-debug = []
 
 [dependencies]
@@ -23,5 +23,5 @@ size = "^0.1"
 log = "^0.4"
 lazy_static = "^1.4.0"
 reqwest = "^0.9"
-lettre = { optional = true, version = "^0.9" }
-lettre_email = { optional = true, version = "^0.9" }
+lettre = "^0.9"
+lettre_email = "^0.9"
