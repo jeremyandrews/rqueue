@@ -40,13 +40,13 @@ cargo build --features rqueue-debug
 
 ### Message in
 
-* `contents` must be set, and can contain any string. It is generally assumed this will be an encrypted blog.
+* `contents` must be set, and can contain any string. It is generally assumed this will be an encrypted blob.
 * `priority` is optional, and can contain an unsigned integer value from 0 to 255; if empty it will automatically be set to 10.
 * `sha256` is optional by default, and if set must be the sha256 of `contents` (optionally salted with `shared_secret`)
 
 #### Security
 
-RQueue can be configured with a `shared_secret` which will get appended to the `contents` before hashing. If you also set `require_sha256 = true`, this provides a layer of security as items will not be added to the queue without a proper hash. For example, if your contents are `test` and your `shared_secret` is `food`, then the required sha256 will be of `testfoo` instead of just `test`. If `sha256` is set to `sha256(test)` alone, it will not be accepted.
+RQueue can be configured with a `shared_secret` which will get appended to the `contents` before hashing. If you also set `require_sha256 = true`, this provides a layer of security as items will not be added to the queue without a proper hash. For example, if your contents are `test` and your `shared_secret` is `foo`, then the required sha256 will be of `testfoo` instead of just `test`. If `sha256` is set to `sha256(test)` alone, it will not be accepted.
 
 ```json
 {
