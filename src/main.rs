@@ -28,6 +28,7 @@ use priority_queue::PriorityQueue;
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use size::{Base, Size, Style};
+use rqpush::Message;
 
 type Priority = u8;
 type Timestamp = u128;
@@ -40,16 +41,9 @@ const DEFAULT_PRIORITY: u8 = 10;
 // By default wait 5 seconds after checking an empty queue
 const DEFAULT_DELAY: usize = 5;
 
-// This defines the format of the message we receive.
-#[derive(Serialize, Deserialize)]
-struct MessageIn {
-    contents: String,
-    sha256: Option<String>,
-    priority: Option<i32>,
-}
 // This defines the format of the message we track internally.
 #[derive(PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default)]
-struct MessageInternal {
+struct InternalMessage {
     size_in_bytes: usize,
     contents: String,
     sha256: String,
@@ -130,7 +124,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for RequestTimer {
 
 lazy_static! {
     static ref COUNTERS: Arc<Mutex<Counters>> = Arc::new(Mutex::new(Counters::default()));
-    static ref QUEUE: Arc<Mutex<PriorityQueue<MessageInternal, Priority>>> = Arc::new(Mutex::new(PriorityQueue::<MessageInternal, Priority>::new()));
+    static ref QUEUE: Arc<Mutex<PriorityQueue<InternalMessage, Priority>>> = Arc::new(Mutex::new(PriorityQueue::<InternalMessage, Priority>::new()));
     static ref PROXY_CONFIG: Arc<Mutex<ProxyConfig>> = Arc::new(Mutex::new(ProxyConfig::default()));
     static ref NOTIFY_CONFIG: Arc<Mutex<NotifyConfig>> = Arc::new(Mutex::new(NotifyConfig::default()));
 }
@@ -156,7 +150,7 @@ fn milliseconds_since_timestamp(timestamp: Duration) -> usize {
 // Accept incoming messages for the proxy to queue.
 #[post("/", format="json", data="<message>")]
 fn new(
-        message: Json<MessageIn>,
+        message: Json<Message>,
         server_started: State<Started>,
         request_started: RequestTimer,
         queue_config: State<QueueConfig>,
@@ -252,7 +246,7 @@ fn new(
             );
         }
         _ => {
-            let temporary_priority: i32 = message.0.priority.unwrap();
+            let temporary_priority: i32 = message.0.priority.unwrap() as i32;
             if temporary_priority < u8::min_value() as i32 {
                 log::info!("{}|received invalid negative priority of {}",
                     milliseconds_since_timestamp(server_started.0),
@@ -317,9 +311,9 @@ fn new(
         }
     }
     // Internal state, the queue 
-    let internal = MessageInternal {
+    let internal = InternalMessage {
         // Size required is the size of this struct, plus the capacity of both contained strings
-        size_in_bytes: std::mem::size_of::<MessageInternal>() + message.0.contents.capacity() + sha256.capacity(),
+        size_in_bytes: std::mem::size_of::<InternalMessage>() + message.0.contents.capacity() + sha256.capacity(),
         contents: message.0.contents,
         sha256: sha256,
         priority: priority,

@@ -56,7 +56,7 @@ RQueue can be configured with a `shared_secret` which will get appended to the `
 }
 ```
 
-If `sha256` is set to someting other than the sha256() of `contents`, the message is not accepted.
+If `sha256` is set to someting other than the sha256() of `contents` (or `contentsfoo` if using a `shared_secret`), the message is not accepted.
 
 ### Message out
 

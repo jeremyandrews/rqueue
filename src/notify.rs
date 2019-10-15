@@ -7,7 +7,7 @@ use lettre::{Transport, SmtpClient};
 use lettre::smtp::extension::ClientId;
 use lettre::smtp::ConnectionReuseParameters;
 
-use crate::{NOTIFY_CONFIG, DEFAULT_DELAY, QUEUE, milliseconds_since_timestamp, MessageInternal};
+use crate::{NOTIFY_CONFIG, DEFAULT_DELAY, QUEUE, milliseconds_since_timestamp, InternalMessage};
 
 pub fn notify_loop(server_started: Duration) {
     let mut sleep_time = DEFAULT_DELAY;
@@ -18,19 +18,19 @@ pub fn notify_loop(server_started: Duration) {
         let queue_contents;
         // We preserve a copy of the message in case there's an error, as then we'll
         // return it to the queue.
-        let mut message: MessageInternal = MessageInternal::default();
+        let mut internal_message: InternalMessage = InternalMessage::default();
         {
             // We don't use counters here, but we have to grab locks in order to prevent a race
             let mut queue = QUEUE.lock().expect("queue lock");
             queue_contents = queue.pop().map(|internal| {
-                message.size_in_bytes = internal.0.size_in_bytes;
-                message.contents = internal.0.contents.clone();
-                message.sha256 = internal.0.sha256.clone();
-                message.priority = internal.0.priority;
-                message.arrived = internal.0.arrived;
-                message.uuid = internal.0.uuid.clone();
-                message.original_priority = internal.0.original_priority;
-                message.delivery_attempts = internal.0.delivery_attempts + 1;
+                internal_message.size_in_bytes = internal.0.size_in_bytes;
+                internal_message.contents = internal.0.contents.clone();
+                internal_message.sha256 = internal.0.sha256.clone();
+                internal_message.priority = internal.0.priority;
+                internal_message.arrived = internal.0.arrived;
+                internal_message.uuid = internal.0.uuid.clone();
+                internal_message.original_priority = internal.0.original_priority;
+                internal_message.delivery_attempts = internal.0.delivery_attempts + 1;
             });
         }
 
@@ -39,16 +39,24 @@ pub fn notify_loop(server_started: Duration) {
             sleep_time = 0;
             log::debug!("{}|message from queue with sha256 {}: '{}'",
                 milliseconds_since_timestamp(server_started),
-                &message.sha256,
-                &message.contents,
+                &internal_message.sha256,
+                &internal_message.contents,
             );
+
+            let notification: rqpush::OutboundNotification = match serde_json::from_str(&internal_message.contents) {
+                Ok(m) => m,
+                Err(e) => {
+                    // @TODO: generate a useful error
+                    rqpush::OutboundNotification::default()
+                }
+            };
 
             let notify_config = NOTIFY_CONFIG.lock().unwrap();
             let email = Email::builder()
                 .from((&notify_config.mail_from_address.to_string(), &notify_config.mail_from_name.to_string()))
                 .to((&notify_config.mail_to_address.to_string(), &notify_config.mail_to_name.to_string()))
-                .subject("test notification")
-                .alternative("<body><p>This is a <em>test</em> notification.</p></body>", "This is a test notification.")
+                .subject(&notification.title)
+                .alternative(&notification.short_html, &notification.short_text)
                 .build()
                 .expect("failed to create email");
             
