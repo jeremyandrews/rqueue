@@ -7,7 +7,7 @@ use lettre::{Transport, SmtpClient};
 use lettre::smtp::extension::ClientId;
 use lettre::smtp::ConnectionReuseParameters;
 
-use crate::{NOTIFY_CONFIG, DEFAULT_DELAY, QUEUE, milliseconds_since_timestamp, InternalMessage};
+use crate::{NOTIFY_CONFIG, DEFAULT_DELAY, COUNTERS, QUEUE, milliseconds_since_timestamp, InternalMessage};
 
 pub fn notify_loop(server_started: Duration) {
     let mut sleep_time = DEFAULT_DELAY;
@@ -45,7 +45,7 @@ pub fn notify_loop(server_started: Duration) {
 
             let notification: rqpush::OutboundNotification = match serde_json::from_str(&internal_message.contents) {
                 Ok(m) => m,
-                Err(e) => {
+                Err(_) => {
                     // @TODO: generate a useful error
                     rqpush::OutboundNotification::default()
                 }
@@ -62,21 +62,35 @@ pub fn notify_loop(server_started: Duration) {
             
             let smtp_user = &notify_config.smtp_user;
             let smtp_password = &notify_config.smtp_password;
-            let mut mailer = SmtpClient::new_simple(&notify_config.smtp_server.to_string()).unwrap()
-                // Set the name sent during EHLO/HELO, default is `localhost`
-                .hello_name(ClientId::Domain("localhost".to_string()))
-                // Add credentials for authentication
-                .credentials(Credentials::new(smtp_user.to_string(), smtp_password.to_string()))
-                // Enable SMTPUTF8 if the server supports it
-                .smtp_utf8(true)
-                // Configure expected authentication mechanism
-                .authentication_mechanism(Mechanism::Plain)
-                // Enable connection reuse
-                .connection_reuse(ConnectionReuseParameters::ReuseUnlimited).transport();
-            
-                let result = mailer.send(email.into());
-            
-            eprintln!("result {:?}", result);
+            match SmtpClient::new_simple(&notify_config.smtp_server.to_string()) {
+                Ok(m) => {
+                    let mut mailer = m
+                        // Set the name sent during EHLO/HELO, default is `localhost`
+                        .hello_name(ClientId::Domain("localhost".to_string()))
+                        // Add credentials for authentication
+                        .credentials(Credentials::new(smtp_user.to_string(), smtp_password.to_string()))
+                        // Enable SMTPUTF8 if the server supports it
+                        .smtp_utf8(true)
+                        // Configure expected authentication mechanism
+                        .authentication_mechanism(Mechanism::Plain)
+                        // Enable connection reuse
+                        .connection_reuse(ConnectionReuseParameters::ReuseUnlimited)
+                        .transport();
+                    let result = mailer.send(email.into());
+                    log::debug!("result {:?}", result);
+                }
+                Err(e) => {
+                    log::warn!("failed to initialize SmtpClient: {}", e);
+                    // sleep a while and try again, something went wrong
+                    sleep_time = notify_config.delay;
+
+                    let priority = internal_message.priority;
+                    // We don't need counters here, but we have to grab locks in order to avoid a race
+                    let _counters = COUNTERS.lock().unwrap();
+                    let mut queue = QUEUE.lock().expect("queue lock");
+                    queue.push(internal_message, priority);
+                } 
+            }
         }
         else {
             // If the queue is empty, sleep longer.
